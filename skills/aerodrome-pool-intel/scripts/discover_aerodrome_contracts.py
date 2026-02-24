@@ -39,6 +39,11 @@ ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 ADDRESS_RE = __import__("re").compile(r"^0x[a-fA-F0-9]{40}$")
 
 
+def is_nonzero_address(value: str) -> bool:
+    normalized = (value or "").lower()
+    return bool(ADDRESS_RE.match(normalized)) and normalized != ZERO_ADDRESS
+
+
 @dataclass
 class ContractRow:
     address: str
@@ -159,18 +164,23 @@ def discover_factories(cast: CastClient, registry: str, max_factories: int) -> L
     length_raw = cast.call(registry, "poolFactoriesLength()(uint256)", allow_fail=True)
     if length_raw:
         factory_len = parse_uint(length_raw)
+        failed_index_lookup = False
         for i in range(min(factory_len, max_factories) if max_factories > 0 else factory_len):
             raw = cast.call(registry, "poolFactories(uint256)(address)", str(i), allow_fail=True)
             addr = parse_address(raw)
-            if addr:
+            if not addr:
+                failed_index_lookup = True
+            if is_nonzero_address(addr):
                 factories.append(addr)
-        if factories:
+        if factories and not failed_index_lookup:
             return factories
+        if failed_index_lookup and factories:
+            print("[discovery] indexed factory lookup was incomplete; falling back to full-array factory lookup")
 
     # fallback: some deployments expose the full array in one call
     raw = cast.call(registry, "poolFactories()(address[])", allow_fail=True)
     if raw:
-        factories.extend(parse_address_list(raw))
+        factories.extend([addr for addr in parse_address_list(raw) if is_nonzero_address(addr)])
         return factories[: max_factories] if max_factories > 0 else factories
 
     return []
@@ -192,7 +202,7 @@ def discover_pools_for_factory(cast: CastClient, factory: str, max_pools: int) -
     for idx in range(count):
         raw = cast.call(factory, "allPools(uint256)(address)", str(idx), allow_fail=True)
         addr = parse_address(raw)
-        if addr:
+        if is_nonzero_address(addr):
             pools.append(addr)
     return pools
 

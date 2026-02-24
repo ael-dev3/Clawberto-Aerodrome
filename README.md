@@ -55,7 +55,13 @@ python3 skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py \
 ```
 
 The two `--token-filter` flags above find pools containing both VEIL and WETH.
-If the result is empty, use `--max-pools` + `--match-all-token-filters` to validate the query shape.
+The scanner resolves exact two-token pairs via factory `getPool(token0, token1, stable)` first.
+That avoids stale metadata snapshots and is the fastest reliable path for VEIL-style pair checks.
+If no result is returned, this is usually either:
+- pair does not exist on Base,
+- wrong token order/network, or
+- factory signature changed for that chain version.
+Use `--match-all-token-filters` only when you explicitly want exact set matching.
 
 ### Contract read helper
 
@@ -87,6 +93,12 @@ python3 skills/aerodrome-pool-intel/scripts/discover_aerodrome_contracts.py \
 
 ```bash
 bash skills/aerodrome-pool-intel/scripts/run_local_sims.sh
+```
+
+If provider rate limits affect the default RPC, pass an alternate endpoint:
+
+```bash
+SIM_RPC_URL=https://base-mainnet.public.blastapi.io bash skills/aerodrome-pool-intel/scripts/run_local_sims.sh
 ```
 
 ## Heartbeat / Operational Runbook

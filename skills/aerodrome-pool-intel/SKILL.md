@@ -81,6 +81,13 @@ python3 skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py \
 
 `--token-filter` can be repeated for both sides of a pair or broader "contains token" search.
 
+For a two-token lookup (e.g., VEIL+WETH), the scanner uses factory pair-resolve calls first.
+This bypasses metadata snapshot lag and is the recommended path for weak LLM prompts asking for
+specific pairs. Expected path:
+1. Query chain factory addresses from `FactoryRegistry`.
+2. Resolve pair directly via `getPool(token0, token1, stable)` in both stable modes.
+3. Return matched pools, if any.
+
 ## Output
 
 - JSON: `runs/aerodrome-pool-intel/latest_report.json`
@@ -136,6 +143,10 @@ Use this before large scans if you want stable contract manifests in CI.
 - Run local validation:
 ```bash
 bash skills/aerodrome-pool-intel/scripts/run_local_sims.sh
+```
+If default RPC gets throttled, set:
+```bash
+SIM_RPC_URL=https://base-mainnet.public.blastapi.io bash skills/aerodrome-pool-intel/scripts/run_local_sims.sh
 ```
 
 - Run periodic heartbeat scan:

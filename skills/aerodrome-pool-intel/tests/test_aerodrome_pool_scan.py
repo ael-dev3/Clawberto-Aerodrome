@@ -182,6 +182,71 @@ class AerodromePoolScanTests(unittest.TestCase):
         self.assertEqual(out["metadata_amp_factor"], 1_000_000_000_000_000_000)
         self.assertEqual(out["metadata_gamma"], 999)
 
+    def test_discover_pools_for_token_pair_prefers_stable_false_then_true(self) -> None:
+        token_a = "0x767A739D1A152639e9Ea1D8c1BD55FDC5B217D7f"
+        token_b = "0x4200000000000000000000000000000000000006"
+        expected_pool = "0xf207d02beCD4417aAA3383804b6B87b17602c86D"
+        factory = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
+
+        class FakeCast:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def call(self, to: str, signature: str, *args: str, **kwargs) -> str:
+                self.calls.append((to, signature, args))
+                if to != factory:
+                    return "0x0000000000000000000000000000000000000000"
+                if signature == "getPool(address,address,bool)(address)":
+                    ordered = args[0] == token_b.lower() and args[1] == token_a.lower()
+                    if ordered and args[2] == "false":
+                        return expected_pool
+                return "0x0000000000000000000000000000000000000000"
+
+        cast = FakeCast()
+        pools = module.discover_pools_for_token_pair(
+            cast=cast,
+            factories=[factory],
+            token_a=token_a,
+            token_b=token_b,
+        )
+
+        self.assertEqual(pools, [expected_pool.lower()])
+        call_sigs = [c[1] for c in cast.calls if c[0] == factory]
+        self.assertIn("getPool(address,address,bool)(address)", call_sigs)
+
+    def test_discover_pools_for_token_pair_collects_stable_variants(self) -> None:
+        token_a = "0x767A739D1A152639e9Ea1D8c1BD55FDC5B217D7f"
+        token_b = "0x4200000000000000000000000000000000000006"
+        unstable_pool = "0xf207d02beCD4417aAA3383804b6B87b17602c86D"
+        stable_pool = "0xaaaAa739D1A152639e9Ea1D8c1BD55FDC5B217D1"
+        factory = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
+
+        class FakeCast:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def call(self, to: str, signature: str, *args: str, **kwargs) -> str:
+                self.calls.append((to, signature, args))
+                if to != factory:
+                    return "0x0000000000000000000000000000000000000000"
+                if signature == "getPool(address,address,bool)(address)":
+                    if args[2] == "false":
+                        return unstable_pool
+                    return stable_pool
+                return "0x0000000000000000000000000000000000000000"
+
+        cast = FakeCast()
+        pools = module.discover_pools_for_token_pair(
+            cast=cast,
+            factories=[factory],
+            token_a=token_a,
+            token_b=token_b,
+        )
+
+        self.assertIn(unstable_pool.lower(), pools)
+        self.assertIn(stable_pool.lower(), pools)
+
+
 
 if __name__ == "__main__":
     unittest.main()

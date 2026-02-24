@@ -63,6 +63,7 @@ KNOWN_DECIMALS = {
 }
 
 SUSPICIOUS_TOKEN_RE = re.compile(r"(?:SCAM|RUG|PUMP|INU|FAKE|HONE|MELT)", re.IGNORECASE)
+PAIR_LOOKUP_STABLE_OPTIONS = ("false", "true")
 
 
 @dataclass
@@ -104,6 +105,10 @@ def normalize_address(value: Any) -> str:
     if text.startswith("0X"):
         text = "0x" + text[2:]
     return text.lower() if ADDRESS_RE.match(text) else ""
+
+
+def is_nonzero_address(value: str) -> bool:
+    return bool(value) and value != ZERO_ADDRESS
 
 
 def normalize_token_filters(raw_filters: Sequence[str]) -> List[str]:
@@ -434,12 +439,17 @@ def discover_factories(cast: CastClient, registry: str, max_factories: int = 0) 
         total = parse_cast_uint(length_raw)
         if max_factories > 0:
             total = min(total, max_factories)
+        failed_index_lookup = False
         for i in range(total):
             addr = parse_cast_address(cast.call(registry, "poolFactories(uint256)(address)", str(i), allow_fail=True) or "")
-            if addr:
+            if not addr:
+                failed_index_lookup = True
+            if is_nonzero_address(addr):
                 out.append(addr)
-        if out:
+        if out and not failed_index_lookup:
             return out
+        if failed_index_lookup and out:
+            print("[scan] indexed factory enumeration was incomplete; falling back to full-array factory lookup")
 
     raw = cast.call(registry, "poolFactories()(address[])", allow_fail=True)
     if not raw:
@@ -447,9 +457,63 @@ def discover_factories(cast: CastClient, registry: str, max_factories: int = 0) 
     for addr in parse_address_list_from_array(raw):
         if max_factories > 0 and len(out) >= max_factories:
             break
-        if addr:
+        if is_nonzero_address(addr):
             out.append(addr)
     return out
+
+
+def discover_pools_for_token_pair(
+    cast: CastClient,
+    factories: Sequence[str],
+    token_a: str,
+    token_b: str,
+) -> List[str]:
+    pair_tokens = [normalize_address(token_a), normalize_address(token_b)]
+    if len(pair_tokens) != 2:
+        return []
+    if pair_tokens[0] == pair_tokens[1]:
+        return []
+
+    attempts: List[Tuple[str, str]] = [
+        (pair_tokens[0], pair_tokens[1]),
+        (pair_tokens[1], pair_tokens[0]),
+    ]
+
+    found: List[str] = []
+    seen: set[str] = set()
+    for factory in factories:
+        for token_0, token_1 in attempts:
+            # Aerodrome clones normally support (token0, token1, stable) direct lookup.
+            for stable in PAIR_LOOKUP_STABLE_OPTIONS:
+                raw = cast.call(
+                    factory,
+                    "getPool(address,address,bool)(address)",
+                    token_0,
+                    token_1,
+                    stable,
+                    allow_fail=True,
+                )
+                if not raw:
+                    continue
+                pool = parse_cast_address(raw)
+                if is_nonzero_address(pool) and pool not in seen:
+                    found.append(pool)
+                    seen.add(pool)
+
+            # fallback for legacy ABIs that omit stable flag
+            if pool_for_token_pair := parse_cast_address(
+                cast.call(
+                    factory,
+                    "getPool(address,address)(address)",
+                    token_0,
+                    token_1,
+                    allow_fail=True,
+                ) or ""
+            ):
+                if is_nonzero_address(pool_for_token_pair) and pool_for_token_pair not in seen:
+                    found.append(pool_for_token_pair)
+                    seen.add(pool_for_token_pair)
+    return found
 
 
 def discover_pools_for_factory(cast: CastClient, factory: str, max_pools: int = 0) -> List[str]:
@@ -465,7 +529,7 @@ def discover_pools_for_factory(cast: CastClient, factory: str, max_pools: int = 
     out: List[str] = []
     for i in range(total):
         addr = parse_cast_address(cast.call(factory, "allPools(uint256)(address)", str(i), allow_fail=True) or "")
-        if addr:
+        if is_nonzero_address(addr):
             out.append(addr)
     return out
 
@@ -479,7 +543,25 @@ def discover_pools_from_registry(cast: CastClient, registry: str, max_factories:
     return list(dict.fromkeys(pools))
 
 
+MIN_METADATA_POOL_THRESHOLD = 10
+
+
 def enumerate_pools(cast: CastClient, args, token_filters: Sequence[str]) -> Tuple[List[str], str]:
+    if len(token_filters) == 2 and args.pool_source != "metadata":
+        factories = discover_factories(cast, args.factory_registry, max_factories=args.max_factories)
+        if factories:
+            pair_pools = discover_pools_for_token_pair(cast, factories, token_filters[0], token_filters[1])
+            if pair_pools:
+                print(f"[scan] found pools via direct pair lookup: {len(pair_pools)}")
+                return pair_pools[: args.max_pools] if args.max_pools > 0 else pair_pools, "chain-pair-lookup"
+            print(
+                "[scan] exact token pair was not found via chain factory pair lookup "
+                f"({token_filters[0]}, {token_filters[1]})"
+            )
+        elif args.pool_source == "chain":
+            print("[scan] no factory addresses were discovered from chain; skipping pair lookup fallback")
+        return [], "chain-pair-lookup"
+
     def _prefer_metadata() -> bool:
         if args.pool_source == "chain":
             return False
@@ -498,11 +580,15 @@ def enumerate_pools(cast: CastClient, args, token_filters: Sequence[str]) -> Tup
                 addr = normalize_address(row.get("address") or "")
                 if addr:
                     pools.append(addr)
-        if pools:
+        if pools and len(pools) >= MIN_METADATA_POOL_THRESHOLD and not token_filters:
             print(f"[scan] pool source: metadata (count={len(pools)})")
             if token_filters:
                 print(f"[scan] token filters: {', '.join(token_filters)}")
             return (pools[: args.max_pools] if args.max_pools > 0 else pools), "metadata"
+        if pools and token_filters:
+            print("[scan] token filter requested; metadata pool list may be incomplete, using chain discovery for full sweep")
+        if pools and len(pools) < MIN_METADATA_POOL_THRESHOLD:
+            print(f"[scan] metadata only has {len(pools)} pools; attempting chain fallback")
 
     fallback = discover_pools_from_registry(
         cast,
@@ -1004,7 +1090,7 @@ def main() -> int:
     print(f"[scan] registry={factory_registry}")
 
     pools, resolved_pool_source = enumerate_pools(cast, args, token_filters)
-    if not pools:
+    if not pools and not (token_filters and len(token_filters) == 2 and args.pool_source != "metadata"):
         raise RuntimeError("No pools discovered")
     print(f"[scan] pools_to_scan={len(pools)}")
     print(f"[scan] token filters: {', '.join(token_filters)}" if token_filters else "[scan] no token filters")

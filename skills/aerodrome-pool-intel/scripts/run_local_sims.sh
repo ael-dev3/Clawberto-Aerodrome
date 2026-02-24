@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 SKILL_DIR="$ROOT_DIR/skills/aerodrome-pool-intel"
 OUT_DIR="$ROOT_DIR/runs/aerodrome-pool-intel"
+SIM_RPC_URL="${SIM_RPC_URL:-https://base-rpc.publicnode.com}"
 
 DISCOVERY_MAX_FACTORIES="${SIM_DISCOVERY_MAX_FACTORIES:-1}"
 DISCOVERY_MAX_POOLS_PER_FACTORY="${SIM_DISCOVERY_MAX_POOLS_PER_FACTORY:-10}"
@@ -20,6 +21,7 @@ PYTHONUNBUFFERED=1 python3 -u -m unittest discover -s "$SKILL_DIR/tests" -p 'tes
 
 printf '[sim] running discovery smoke\n'
 PYTHONUNBUFFERED=1 python3 -u "$SKILL_DIR/scripts/discover_aerodrome_contracts.py" \
+  --rpc-url "$SIM_RPC_URL" \
   --max-factories "$DISCOVERY_MAX_FACTORIES" \
   --max-pools-per-factory "$DISCOVERY_MAX_POOLS_PER_FACTORY" \
   --write-json "$OUT_DIR/sim_discovery.json" \
@@ -27,6 +29,7 @@ PYTHONUNBUFFERED=1 python3 -u "$SKILL_DIR/scripts/discover_aerodrome_contracts.p
 
 printf '[sim] running live scan smoke\n'
 PYTHONUNBUFFERED=1 python3 -u "$SKILL_DIR/scripts/aerodrome_pool_scan.py" \
+  --rpc-url "$SIM_RPC_URL" \
   --max-pools "$SCAN_MAX_POOLS" \
   --workers "$SCAN_WORKERS" \
   --http-workers "$SCAN_HTTP_WORKERS" \
@@ -42,6 +45,7 @@ PYTHONUNBUFFERED=1 python3 -u "$SKILL_DIR/scripts/aerodrome_pool_scan.py" \
 
 printf '[sim] running contract call smoke\n'
 PYTHONUNBUFFERED=1 python3 -u "$SKILL_DIR/scripts/aerodrome_contract_call.py" \
+  --rpc-url "$SIM_RPC_URL" \
   --to 0x16613524e02ad97eDfeF371bC883F2F5d6C480A5 \
   --sig 'length()(uint256)' \
   --json > "$OUT_DIR/sim_contract_call.json"
