@@ -1,0 +1,9 @@
+interface:
+  display_name: "Aerodrome Pool Intel"
+  short_description: "Base protocol pool ranking with APR and safety scoring"
+  default_prompt: "Use $aerodrome-pool-intel for deterministic Aerodrome pool inventory, APR decomposition, vote-share insights, and risk scoring on Base."
+  brand_color: "#1f7cff"
+dependencies:
+  tools: []
+policy:
+  allow_implicit_invocation: true

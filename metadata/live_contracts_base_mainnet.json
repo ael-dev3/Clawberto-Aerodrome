@@ -1,0 +1,304 @@
+{
+  "generated_at_utc": "2026-02-24T13:05:06+00:00",
+  "chain": "Base",
+  "chain_id": 8453,
+  "rpc_url": "https://base-rpc.publicnode.com",
+  "inputs": {
+    "factory_registry": "0x5c3f18f06cc09ca1910767a34a20f771039e37c0",
+    "voter": "0x16613524e02ad97edfef371bc883f2f5d6c480a5",
+    "max_factories": 1,
+    "max_pools_per_factory": 4,
+    "max_reward_tokens": 8
+  },
+  "counts": {
+    "total": 33,
+    "core": 10,
+    "pool_factory": 1,
+    "pool": 4,
+    "gauge": 4,
+    "token": 3,
+    "reward_contract": 8,
+    "reward_token": 3
+  },
+  "errors": [],
+  "roles": {
+    "core": [
+      {
+        "address": "0x16613524e02ad97edfef371bc883f2f5d6c480a5",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_voter"
+      },
+      {
+        "address": "0x227f65131a261548b057215bb1d5ab2997964c7d",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_rewards_distributor"
+      },
+      {
+        "address": "0x35f35ca5b132cadf2916bab57639128eac5bbcb5",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_gauge_factory"
+      },
+      {
+        "address": "0x4200000000000000000000000000000000000006",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_weth"
+      },
+      {
+        "address": "0x5c3f18f06cc09ca1910767a34a20f771039e37c0",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_factory_registry"
+      },
+      {
+        "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_usdc"
+      },
+      {
+        "address": "0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_aero_token"
+      },
+      {
+        "address": "0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_router"
+      },
+      {
+        "address": "0xeb018363f0a9af8f91f06fee6613a751b2a33fe5",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_minter"
+      },
+      {
+        "address": "0xebf418fe2512e7e6bd9b87a8f0f294acdc67e6b4",
+        "chain": "8453",
+        "source": "seed",
+        "parent": "",
+        "symbol": "",
+        "notes": "known_voting_escrow"
+      }
+    ],
+    "gauge": [
+      {
+        "address": "0x50f0249b824033cf0af0c8b9fe1c67c2842a34d5",
+        "chain": "8453",
+        "source": "voter",
+        "parent": "0x723aef6543aece026a15662be4d3fb3424d502a9",
+        "symbol": "",
+        "notes": "live gauge"
+      },
+      {
+        "address": "0xad3d4afd779e4a57734557cce25f87032614fe47",
+        "chain": "8453",
+        "source": "voter",
+        "parent": "0xaf58fdee432a104a932a899968d60f92838886cd",
+        "symbol": "",
+        "notes": "live gauge"
+      },
+      {
+        "address": "0xf05a3de3dd6910042f506c6105bc14920c4289b6",
+        "chain": "8453",
+        "source": "voter",
+        "parent": "0x2b7704f1cb9324cd8586b33c6c540cbd64e58237",
+        "symbol": "",
+        "notes": "live gauge"
+      },
+      {
+        "address": "0xfae8c18d83655fbf31af10d2e9a1ad5ba77d0377",
+        "chain": "8453",
+        "source": "voter",
+        "parent": "0x2722c8f9b5e2ac72d1f225f8e8c990e449ba0078",
+        "symbol": "",
+        "notes": "live gauge"
+      }
+    ],
+    "pool": [
+      {
+        "address": "0x2722c8f9b5e2ac72d1f225f8e8c990e449ba0078",
+        "chain": "8453",
+        "source": "pool_factory",
+        "parent": "0x420dd381b31aef6683db6b902084cb0ffece40da",
+        "symbol": "",
+        "notes": "index=1"
+      },
+      {
+        "address": "0x2b7704f1cb9324cd8586b33c6c540cbd64e58237",
+        "chain": "8453",
+        "source": "pool_factory",
+        "parent": "0x420dd381b31aef6683db6b902084cb0ffece40da",
+        "symbol": "",
+        "notes": "index=3"
+      },
+      {
+        "address": "0x723aef6543aece026a15662be4d3fb3424d502a9",
+        "chain": "8453",
+        "source": "pool_factory",
+        "parent": "0x420dd381b31aef6683db6b902084cb0ffece40da",
+        "symbol": "",
+        "notes": "index=0"
+      },
+      {
+        "address": "0xaf58fdee432a104a932a899968d60f92838886cd",
+        "chain": "8453",
+        "source": "pool_factory",
+        "parent": "0x420dd381b31aef6683db6b902084cb0ffece40da",
+        "symbol": "",
+        "notes": "index=2"
+      }
+    ],
+    "pool_factory": [
+      {
+        "address": "0x420dd381b31aef6683db6b902084cb0ffece40da",
+        "chain": "8453",
+        "source": "factory_registry",
+        "parent": "0x5c3f18f06cc09ca1910767a34a20f771039e37c0",
+        "symbol": "",
+        "notes": "index=0"
+      }
+    ],
+    "reward_contract": [
+      {
+        "address": "0x1bee27670a1facac1b59143a387740223a203604",
+        "chain": "8453",
+        "source": "voter_bribe",
+        "parent": "0xfae8c18d83655fbf31af10d2e9a1ad5ba77d0377",
+        "symbol": "",
+        "notes": "IReward-compatible"
+      },
+      {
+        "address": "0x3993152dfcee60cbf6e6c68d00b15c1c08fcae24",
+        "chain": "8453",
+        "source": "voter_bribe",
+        "parent": "0xad3d4afd779e4a57734557cce25f87032614fe47",
+        "symbol": "",
+        "notes": "IReward-compatible"
+      },
+      {
+        "address": "0x8cc161140fbab7baa80369a0f0bd621cf667c022",
+        "chain": "8453",
+        "source": "voter_fees",
+        "parent": "0xfae8c18d83655fbf31af10d2e9a1ad5ba77d0377",
+        "symbol": "",
+        "notes": "IReward-compatible"
+      },
+      {
+        "address": "0x958a5612390bb4134e1e7505c7cb6b0652941174",
+        "chain": "8453",
+        "source": "voter_fees",
+        "parent": "0x50f0249b824033cf0af0c8b9fe1c67c2842a34d5",
+        "symbol": "",
+        "notes": "IReward-compatible"
+      },
+      {
+        "address": "0xaa89a3a9d0a5c48ac686c4a699f24b72a42f4547",
+        "chain": "8453",
+        "source": "voter_fees",
+        "parent": "0xf05a3de3dd6910042f506c6105bc14920c4289b6",
+        "symbol": "",
+        "notes": "IReward-compatible"
+      },
+      {
+        "address": "0xb0b88ca338f183d2fbabab0f75ba3c90424131d9",
+        "chain": "8453",
+        "source": "voter_bribe",
+        "parent": "0x50f0249b824033cf0af0c8b9fe1c67c2842a34d5",
+        "symbol": "",
+        "notes": "IReward-compatible"
+      },
+      {
+        "address": "0xe6742fae461ecaf4c6dbd3eb0e3e482bcb2c5567",
+        "chain": "8453",
+        "source": "voter_bribe",
+        "parent": "0xf05a3de3dd6910042f506c6105bc14920c4289b6",
+        "symbol": "",
+        "notes": "IReward-compatible"
+      },
+      {
+        "address": "0xf5c0f1f4a4dcb52cd67be2e39784d87865a2b957",
+        "chain": "8453",
+        "source": "voter_fees",
+        "parent": "0xad3d4afd779e4a57734557cce25f87032614fe47",
+        "symbol": "",
+        "notes": "IReward-compatible"
+      }
+    ],
+    "reward_token": [
+      {
+        "address": "0x26f3901ac8a79c50fb0d8289c74f0d09adc42e29",
+        "chain": "8453",
+        "source": "bribe_reward_contract",
+        "parent": "0xb0b88ca338f183d2fbabab0f75ba3c90424131d9",
+        "symbol": "",
+        "notes": "reward distribution token"
+      },
+      {
+        "address": "0x50c5725949a6f0c72e6c4a641f24049a917db0cb",
+        "chain": "8453",
+        "source": "bribe_reward_contract",
+        "parent": "0x3993152dfcee60cbf6e6c68d00b15c1c08fcae24",
+        "symbol": "",
+        "notes": "reward distribution token"
+      },
+      {
+        "address": "0x96e890c6b2501a69cad5dba402bfb871a2a2874c",
+        "chain": "8453",
+        "source": "bribe_reward_contract",
+        "parent": "0x3993152dfcee60cbf6e6c68d00b15c1c08fcae24",
+        "symbol": "",
+        "notes": "reward distribution token"
+      }
+    ],
+    "token": [
+      {
+        "address": "0x236aa50979d5f3de3bd1eeb40e81137f22ab794b",
+        "chain": "8453",
+        "source": "pool_metadata",
+        "parent": "0x723aef6543aece026a15662be4d3fb3424d502a9",
+        "symbol": "",
+        "notes": "pool token"
+      },
+      {
+        "address": "0x2dad3a13ef0c6366220f989157009e501e7938f8",
+        "chain": "8453",
+        "source": "pool_metadata",
+        "parent": "0x2b7704f1cb9324cd8586b33c6c540cbd64e58237",
+        "symbol": "",
+        "notes": "pool token"
+      },
+      {
+        "address": "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca",
+        "chain": "8453",
+        "source": "pool_metadata",
+        "parent": "0x723aef6543aece026a15662be4d3fb3424d502a9",
+        "symbol": "",
+        "notes": "pool token"
+      }
+    ]
+  }
+}

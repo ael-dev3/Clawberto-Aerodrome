@@ -1,0 +1,14 @@
+# Logs and artifacts
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Runtime output
+runs/*/*.json
+runs/*/*.csv
+
+# OS files
+.DS_Store
+Thumbs.db
