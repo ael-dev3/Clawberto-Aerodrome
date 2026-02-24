@@ -90,6 +90,47 @@ class AerodromePoolScanTests(unittest.TestCase):
         self.assertEqual(module.parse_cast_uint("18594 [1.859e4]"), 18594)
         self.assertEqual(module.parse_cast_uint("0x04"), 4)
 
+    def test_normalize_token_filters(self) -> None:
+        raw = [
+            "0X4200000000000000000000000000000000000006",
+            "0x4200000000000000000000000000000000000006",
+            " 0x4200000000000000000000000000000000000007 ",
+            "bad",
+            "",
+        ]
+        out = module.normalize_token_filters(raw)
+        self.assertEqual(
+            out,
+            [
+                "0x4200000000000000000000000000000000000006",
+                "0x4200000000000000000000000000000000000007",
+            ],
+        )
+
+    def test_token_filter_matches(self) -> None:
+        token0 = "0x4200000000000000000000000000000000000006"
+        token1 = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+        hits, any_hit, all_hit = module.token_filter_matches(
+            token0,
+            token1,
+            ["0x4200000000000000000000000000000000000006"],
+        )
+        self.assertEqual(hits, ["0x4200000000000000000000000000000000000006"])
+        self.assertTrue(any_hit)
+        self.assertTrue(all_hit)
+
+        hits, any_hit, all_hit = module.token_filter_matches(
+            token0,
+            token1,
+            [
+                "0x4200000000000000000000000000000000000006",
+                "0x0000000000000000000000000000000000000000",
+            ],
+        )
+        self.assertEqual(hits, ["0x4200000000000000000000000000000000000006"])
+        self.assertTrue(any_hit)
+        self.assertFalse(all_hit)
+
     def test_sort_rows_by_apr(self) -> None:
         rows = [
             {"pool_address": "a", "total_apr_pct": 1.2, "safety_score": 10.0, "liquidity_usd": 100.0},

@@ -43,6 +43,20 @@ python3 skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py \
   --out-csv runs/aerodrome-pool-intel/custom.csv
 ```
 
+### Find a token pair with full on-chain scan
+
+```bash
+python3 skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py \
+  --pool-source chain \
+  --token-filter 0x767A739D1A152639e9Ea1D8c1BD55FDC5B217D7f \
+  --token-filter 0x4200000000000000000000000000000000000006 \
+  --sort-by liquidity \
+  --strict
+```
+
+The two `--token-filter` flags above find pools containing both VEIL and WETH.
+If the result is empty, use `--max-pools` + `--match-all-token-filters` to validate the query shape.
+
 ### Contract read helper
 
 ```bash

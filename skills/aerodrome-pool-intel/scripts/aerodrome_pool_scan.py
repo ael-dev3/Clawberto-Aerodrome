@@ -106,6 +106,26 @@ def normalize_address(value: Any) -> str:
     return text.lower() if ADDRESS_RE.match(text) else ""
 
 
+def normalize_token_filters(raw_filters: Sequence[str]) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for raw in raw_filters:
+        addr = normalize_address(raw)
+        if not addr or addr in seen:
+            continue
+        out.append(addr)
+        seen.add(addr)
+    return out
+
+
+def token_filter_matches(token0: str, token1: str, token_filters: Sequence[str]) -> Tuple[List[str], bool, bool]:
+    if not token_filters:
+        return [], False, False
+    token_set = {normalize_address(token0), normalize_address(token1)}
+    hits = [addr for addr in token_filters if addr in token_set]
+    return hits, bool(hits), len(hits) >= len(token_filters)
+
+
 def to_float(value: Any, default: float = 0.0) -> float:
     try:
         if value is None:
@@ -459,9 +479,17 @@ def discover_pools_from_registry(cast: CastClient, registry: str, max_factories:
     return list(dict.fromkeys(pools))
 
 
-def enumerate_pools(cast: CastClient, args) -> List[str]:
+def enumerate_pools(cast: CastClient, args, token_filters: Sequence[str]) -> Tuple[List[str], str]:
+    def _prefer_metadata() -> bool:
+        if args.pool_source == "chain":
+            return False
+        if args.pool_source == "metadata":
+            return True
+        # auto mode defaults to metadata for speed, unless token filters are used.
+        return not token_filters
+
     metadata_path = repo_root() / "metadata" / "live_contracts_base_mainnet.csv"
-    if metadata_path.exists():
+    if _prefer_metadata() and metadata_path.exists():
         with metadata_path.open("r", encoding="utf-8") as fp:
             rows = list(csv.DictReader(fp))
         pools = []
@@ -471,7 +499,10 @@ def enumerate_pools(cast: CastClient, args) -> List[str]:
                 if addr:
                     pools.append(addr)
         if pools:
-            return pools[: args.max_pools] if args.max_pools > 0 else pools
+            print(f"[scan] pool source: metadata (count={len(pools)})")
+            if token_filters:
+                print(f"[scan] token filters: {', '.join(token_filters)}")
+            return (pools[: args.max_pools] if args.max_pools > 0 else pools), "metadata"
 
     fallback = discover_pools_from_registry(
         cast,
@@ -483,7 +514,10 @@ def enumerate_pools(cast: CastClient, args) -> List[str]:
         fallback = fallback[: args.max_pools]
     if not fallback:
         raise RuntimeError("No pools discovered from registry")
-    return fallback
+    print(f"[scan] pool source: chain (count={len(fallback)})")
+    if token_filters:
+        print(f"[scan] token filters: {', '.join(token_filters)}")
+    return fallback, "chain"
 
 
 def read_token_meta(
@@ -909,6 +943,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-pools", type=int, default=0, help="Limit pool count for fast local tests (0=all)")
     parser.add_argument("--max-factories", type=int, default=0)
     parser.add_argument("--max-pools-per-factory", type=int, default=200)
+    parser.add_argument(
+        "--pool-source",
+        choices=["auto", "metadata", "chain"],
+        default="auto",
+        help="Pool discovery source for scan (auto, metadata, or chain)",
+    )
+    parser.add_argument(
+        "--token-filter",
+        action="append",
+        default=[],
+        help="Filter pools containing this token address (repeatable)",
+    )
+    parser.add_argument(
+        "--match-all-token-filters",
+        action="store_true",
+        help="Require every --token-filter token to be in the pool",
+    )
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--http-workers", type=int, default=6)
     parser.add_argument("--max-reward-tokens", type=int, default=8)
@@ -945,13 +996,18 @@ def main() -> int:
     if not all((voter, factory_registry, voting_escrow, rewards_distributor, aero_token)):
         raise RuntimeError("One or more required on-chain addresses is invalid")
 
+    token_filters = normalize_token_filters(getattr(args, "token_filter", []) or [])
+    if token_filters and args.pool_source == "metadata":
+        print("[scan] warning: token filters requested with --pool-source metadata; results may be incomplete if registry changed since manifest capture")
+
     print(f"[scan] voter={voter}")
     print(f"[scan] registry={factory_registry}")
 
-    pools = enumerate_pools(cast, args)
+    pools, resolved_pool_source = enumerate_pools(cast, args, token_filters)
     if not pools:
         raise RuntimeError("No pools discovered")
     print(f"[scan] pools_to_scan={len(pools)}")
+    print(f"[scan] token filters: {', '.join(token_filters)}" if token_filters else "[scan] no token filters")
 
     # market lookups
     markets = fetch_markets_for_pools(pools, workers=max(1, args.http_workers)) if not args.skip_market else {}
@@ -972,6 +1028,10 @@ def main() -> int:
         market = markets.get(pool)
         row: Dict[str, Any] = {
             "pool_address": pool,
+            "token_filter_inputs": token_filters,
+            "token_filter_hits": [],
+            "token_filter_match_any": False,
+            "token_filter_match_all": False,
         }
         warnings: List[str] = []
         errors: List[str] = []
@@ -980,6 +1040,11 @@ def main() -> int:
             pool_meta = read_pool_market_data(cast, pool)
             token0_addr = normalize_address(pool_meta["token0"])
             token1_addr = normalize_address(pool_meta["token1"])
+            token_filter_hits, token_filter_match_any, token_filter_match_all = token_filter_matches(
+                token0_addr,
+                token1_addr,
+                token_filters,
+            )
 
             # fallback metadata from market (for symbol/name when contract does not return)
             f0_symbol = ""
@@ -1133,6 +1198,10 @@ def main() -> int:
                     "age_days": safety["age_days"],
                     "bribe_rewards": bribe_breakdown,
                     "warnings": warnings,
+                    "token_filter_inputs": token_filters,
+                    "token_filter_hits": token_filter_hits,
+                    "token_filter_match_any": token_filter_match_any,
+                    "token_filter_match_all": token_filter_match_all,
                 }
             )
 
@@ -1170,6 +1239,16 @@ def main() -> int:
                 print(f"[scan] progress: {completed}/{len(futures)}")
 
     # Filters
+    if token_filters:
+        if args.match_all_token_filters:
+            rows = [r for r in rows if bool(r.get("token_filter_match_all"))]
+        else:
+            rows = [r for r in rows if bool(r.get("token_filter_match_any"))]
+        if not rows:
+            print(
+                f"[scan] no rows matched token filters={','.join(token_filters)} "
+                f"source={resolved_pool_source} scanned_pools={len(pools)}"
+            )
     if args.only_gauged:
         rows = [r for r in rows if bool(r.get("is_gauged"))]
     if args.only_alive:
@@ -1225,6 +1304,10 @@ def main() -> int:
             "voting_escrow": voting_escrow,
             "rewards_distributor": rewards_distributor,
             "aero_token": aero_token,
+            "pool_source_request": args.pool_source,
+            "pool_source_resolved": resolved_pool_source,
+            "token_filters": token_filters,
+            "token_filter_match_all": bool(args.match_all_token_filters),
             "router": normalize_address(args.router),
             "sort_by": args.sort_by,
             "max_pools": args.max_pools,
@@ -1291,6 +1374,10 @@ def main() -> int:
         "errors",
         "gas_estimates",
         "gas_cost_usd",
+        "token_filter_inputs",
+        "token_filter_hits",
+        "token_filter_match_any",
+        "token_filter_match_all",
     ]
     with out_csv.open("w", newline="", encoding="utf-8") as fp:
         writer = csv.DictWriter(fp, fieldnames=csv_fields)
@@ -1302,6 +1389,8 @@ def main() -> int:
                     "warnings": ";".join(row.get("warnings") or []),
                     "errors": ";".join(row.get("errors") or []),
                     "safety_reasons": ";".join(row.get("safety_reasons") or []),
+                    "token_filter_inputs": ";".join(row.get("token_filter_inputs") or []),
+                    "token_filter_hits": ";".join(row.get("token_filter_hits") or []),
                     "gas_estimates": json.dumps(row.get("gas_estimates") or []),
                     "gas_cost_usd": json.dumps(row.get("gas_cost_usd") or {}),
                 }

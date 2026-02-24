@@ -67,6 +67,20 @@ python3 skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py \
   --max-pools 200
 ```
 
+### Token-specific pair search
+
+```bash
+python3 skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py \
+  --pool-source chain \
+  --token-filter 0x767A739D1A152639e9Ea1D8c1BD55FDC5B217D7f \
+  --token-filter 0x4200000000000000000000000000000000000006 \
+  --match-all-token-filters \
+  --sort-by safety \
+  --strict
+```
+
+`--token-filter` can be repeated for both sides of a pair or broader "contains token" search.
+
 ## Output
 
 - JSON: `runs/aerodrome-pool-intel/latest_report.json`
@@ -126,6 +140,13 @@ bash skills/aerodrome-pool-intel/scripts/run_local_sims.sh
 
 - Run periodic heartbeat scan:
 ```bash
+bash skills/aerodrome-pool-intel/scripts/heartbeat_aerodrome_scan.sh
+```
+- With looped 30-minute heartbeat and auto-rebalance recommendations:
+```bash
+SCAN_LOOP=1 \
+SCAN_LOOP_INTERVAL_SECONDS=1800 \
+SCAN_AUTO_REBALANCE=1 \
 bash skills/aerodrome-pool-intel/scripts/heartbeat_aerodrome_scan.sh
 ```
 
