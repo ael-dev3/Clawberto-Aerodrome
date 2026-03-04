@@ -5,6 +5,7 @@ import math
 import sys
 from pathlib import Path
 import unittest
+from unittest import mock
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "aerodrome_pool_scan.py"
 SPEC = importlib.util.spec_from_file_location("aerodrome_pool_scan", SCRIPT_PATH)
@@ -245,6 +246,145 @@ class AerodromePoolScanTests(unittest.TestCase):
 
         self.assertIn(unstable_pool.lower(), pools)
         self.assertIn(stable_pool.lower(), pools)
+
+    def test_is_transient_rpc_error(self) -> None:
+        self.assertTrue(module.is_transient_rpc_error("HTTP 429 Too Many Requests"))
+        self.assertTrue(module.is_transient_rpc_error("gateway timeout from upstream provider"))
+        self.assertTrue(module.is_transient_rpc_error("temporary failure in name resolution"))
+        self.assertFalse(module.is_transient_rpc_error("execution reverted: custom revert"))
+
+    def test_is_transient_http_error(self) -> None:
+        err_429 = module.urllib.error.HTTPError(
+            url="https://api.dexscreener.com/latest/dex/tokens/0x1",
+            code=429,
+            msg="Too Many Requests",
+            hdrs=None,
+            fp=None,
+        )
+        err_404 = module.urllib.error.HTTPError(
+            url="https://api.dexscreener.com/latest/dex/tokens/0x1",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=None,
+        )
+        dns_err = module.urllib.error.URLError("temporary failure in name resolution")
+
+        self.assertTrue(module.is_transient_http_error(err_429))
+        self.assertFalse(module.is_transient_http_error(err_404))
+        self.assertTrue(module.is_transient_http_error(dns_err))
+
+    def test_retry_backoff_seconds_caps_at_max(self) -> None:
+        cfg = module.RetryConfig(max_retries=4, base_delay_ms=100, max_delay_ms=250)
+        self.assertTrue(math.isclose(module.retry_backoff_seconds(0, cfg), 0.1, rel_tol=1e-9))
+        self.assertTrue(math.isclose(module.retry_backoff_seconds(1, cfg), 0.2, rel_tol=1e-9))
+        self.assertTrue(math.isclose(module.retry_backoff_seconds(2, cfg), 0.25, rel_tol=1e-9))
+        self.assertTrue(math.isclose(module.retry_backoff_seconds(8, cfg), 0.25, rel_tol=1e-9))
+
+    def test_cast_call_retries_transient_error_then_succeeds(self) -> None:
+        addr = module.WETH_ADDRESS.lower()
+        run_results = [
+            mock.Mock(returncode=1, stdout="", stderr="HTTP 429 Too Many Requests"),
+            mock.Mock(returncode=0, stdout="123\n", stderr=""),
+        ]
+        with mock.patch.object(module.subprocess, "run", side_effect=run_results) as run_mock, mock.patch.object(
+            module.time, "sleep"
+        ) as sleep_mock:
+            client = module.CastClient(
+                module.DEFAULT_RPC_URL,
+                timeout_sec=1,
+                retry_config=module.RetryConfig(max_retries=2, base_delay_ms=1, max_delay_ms=10),
+            )
+            out = client.call(addr, "decimals()(uint8)", allow_fail=False, use_cache=False)
+
+        self.assertEqual(out, "123")
+        self.assertEqual(run_mock.call_count, 2)
+        self.assertEqual(sleep_mock.call_count, 1)
+
+    def test_cast_call_allow_fail_non_transient_error_returns_none_without_retry(self) -> None:
+        addr = module.WETH_ADDRESS.lower()
+        with mock.patch.object(
+            module.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=1, stdout="", stderr="execution reverted: bad call"),
+        ) as run_mock, mock.patch.object(module.time, "sleep") as sleep_mock:
+            client = module.CastClient(
+                module.DEFAULT_RPC_URL,
+                timeout_sec=1,
+                retry_config=module.RetryConfig(max_retries=3, base_delay_ms=1, max_delay_ms=10),
+            )
+            out = client.call(addr, "decimals()(uint8)", allow_fail=True, use_cache=False)
+
+        self.assertIsNone(out)
+        self.assertEqual(run_mock.call_count, 1)
+        self.assertEqual(sleep_mock.call_count, 0)
+
+    def test_http_get_json_retries_transient_http_error(self) -> None:
+        class FakeResponse:
+            def __init__(self, body: bytes) -> None:
+                self._body = body
+                self._cursor = 0
+
+            def read(self, n: int = -1) -> bytes:
+                if self._cursor >= len(self._body):
+                    return b""
+                if n <= 0:
+                    n = len(self._body) - self._cursor
+                out = self._body[self._cursor : self._cursor + n]
+                self._cursor += len(out)
+                return out
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        err_429 = module.urllib.error.HTTPError(
+            url="https://api.dexscreener.com/latest/dex/tokens/0x1",
+            code=429,
+            msg="Too Many Requests",
+            hdrs=None,
+            fp=None,
+        )
+        payload = b'{"pairs": []}'
+
+        with mock.patch.object(
+            module.urllib.request,
+            "urlopen",
+            side_effect=[err_429, FakeResponse(payload)],
+        ) as open_mock, mock.patch.object(module.time, "sleep") as sleep_mock:
+            out = module.http_get_json(
+                "https://api.dexscreener.com/latest/dex/tokens/0x1111111111111111111111111111111111111111",
+                timeout_sec=1.0,
+                retry_config=module.RetryConfig(max_retries=1, base_delay_ms=1, max_delay_ms=5),
+            )
+
+        self.assertEqual(out, {"pairs": []})
+        self.assertEqual(open_mock.call_count, 2)
+        self.assertEqual(sleep_mock.call_count, 1)
+
+    def test_http_get_json_does_not_retry_non_transient_http_error(self) -> None:
+        err_404 = module.urllib.error.HTTPError(
+            url="https://api.dexscreener.com/latest/dex/tokens/0x1",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=None,
+        )
+
+        with mock.patch.object(module.urllib.request, "urlopen", side_effect=err_404) as open_mock, mock.patch.object(
+            module.time, "sleep"
+        ) as sleep_mock:
+            with self.assertRaises(module.urllib.error.HTTPError):
+                module.http_get_json(
+                    "https://api.dexscreener.com/latest/dex/tokens/0x1111111111111111111111111111111111111111",
+                    timeout_sec=1.0,
+                    retry_config=module.RetryConfig(max_retries=3, base_delay_ms=1, max_delay_ms=5),
+                )
+
+        self.assertEqual(open_mock.call_count, 1)
+        self.assertEqual(sleep_mock.call_count, 0)
 
 
 

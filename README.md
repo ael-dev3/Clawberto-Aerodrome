@@ -25,7 +25,7 @@ OpenClaw skill set for deterministic Aerodrome pool intelligence on Base (chain 
 ### Full scan
 
 ```bash
-cd /Users/marko/Clawberto-Aerodrome
+cd /Users/marko/.openclaw/workspace/Clawberto-Aerodrome
 python3 skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py \
   --max-pools 200 \
   --strict \
@@ -63,6 +63,26 @@ If no result is returned, this is usually either:
 - factory signature changed for that chain version.
 Use `--match-all-token-filters` only when you explicitly want exact set matching.
 
+### Reliability knobs (retry/backoff)
+
+Transient RPC and HTTP failures now use bounded exponential backoff by default.
+
+```bash
+python3 skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py \
+  --rpc-max-retries 3 \
+  --rpc-retry-base-ms 350 \
+  --rpc-retry-max-ms 2500 \
+  --http-timeout-sec 10 \
+  --http-max-retries 2 \
+  --http-retry-base-ms 250 \
+  --http-retry-max-ms 2000
+```
+
+Environment overrides are also supported:
+- RPC: `AERODROME_RPC_MAX_RETRIES`, `AERODROME_RPC_RETRY_BASE_MS`, `AERODROME_RPC_RETRY_MAX_MS`
+- HTTP: `AERODROME_HTTP_TIMEOUT_SEC`, `AERODROME_HTTP_MAX_RETRIES`, `AERODROME_HTTP_RETRY_BASE_MS`, `AERODROME_HTTP_RETRY_MAX_MS`
+- Heartbeat-compatible aliases: `SCAN_RPC_*` and `SCAN_HTTP_*` (same suffixes)
+
 ### Contract read helper
 
 ```bash
@@ -85,6 +105,7 @@ python3 skills/aerodrome-pool-intel/scripts/discover_aerodrome_contracts.py \
 
 - Read-only mode only (`cast call` and `cast estimate` used on demand).
 - RPC and HTTP calls are host allowlisted.
+- Transient retry/backoff is bounded and only applies to read paths.
 - Optional strict mode fails fast when APR/safety values are non-finite.
 - Official ETH/USDC pools are hard-pinned to safety score `10.0`.
 - Every row includes explicit `warnings`, `safety_reasons`, and `errors`.

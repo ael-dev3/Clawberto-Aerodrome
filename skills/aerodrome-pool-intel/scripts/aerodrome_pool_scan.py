@@ -13,7 +13,9 @@ import csv
 import datetime as dt
 import json
 import math
+import os
 import re
+import socket
 from decimal import Decimal, InvalidOperation
 import subprocess
 import sys
@@ -55,6 +57,12 @@ DEFAULT_HTTP_TIMEOUT_SEC = 10
 MAX_HTTP_BYTES = 12 * 1024 * 1024
 SECONDS_PER_YEAR = 365 * 24 * 60 * 60
 SECONDS_PER_WEEK = 7 * 24 * 60 * 60
+DEFAULT_RPC_MAX_RETRIES = 2
+DEFAULT_RPC_RETRY_BASE_MS = 350
+DEFAULT_RPC_RETRY_MAX_MS = 2500
+DEFAULT_HTTP_MAX_RETRIES = 2
+DEFAULT_HTTP_RETRY_BASE_MS = 250
+DEFAULT_HTTP_RETRY_MAX_MS = 2000
 
 KNOWN_DECIMALS = {
     DEFAULT_AERO_TOKEN.lower(): 18,
@@ -64,6 +72,22 @@ KNOWN_DECIMALS = {
 
 SUSPICIOUS_TOKEN_RE = re.compile(r"(?:SCAM|RUG|PUMP|INU|FAKE|HONE|MELT)", re.IGNORECASE)
 PAIR_LOOKUP_STABLE_OPTIONS = ("false", "true")
+TRANSIENT_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+TRANSIENT_ERROR_TEXT_RE = re.compile(
+    r"(?:"
+    r"rate\s*limit|too\s*many\s*requests|\b429\b|"
+    r"timeout|timed\s*out|"
+    r"gateway\s*timeout|\b504\b|"
+    r"service\s*unavailable|\b503\b|"
+    r"bad\s*gateway|\b502\b|"
+    r"temporar(?:ily)?\s+unavailable|"
+    r"connection\s*reset|connection\s*aborted|connection\s*refused|"
+    r"network\s*is\s*unreachable|"
+    r"name\s*or\s*service\s*not\s*known|temporary\s*failure\s*in\s*name\s*resolution|"
+    r"econnreset|etimedout|eai_again|socket\s*hang\s*up|fetch\s*failed"
+    r")",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -90,6 +114,35 @@ class PairMarket:
     quote_token_address: Optional[str]
     quote_token_symbol: Optional[str]
     quote_token_name: Optional[str]
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    max_retries: int
+    base_delay_ms: int
+    max_delay_ms: int
+
+
+def clamp_retry_config(config: RetryConfig) -> RetryConfig:
+    max_retries = max(0, int(config.max_retries))
+    base_delay_ms = max(1, int(config.base_delay_ms))
+    max_delay_ms = max(base_delay_ms, int(config.max_delay_ms))
+    return RetryConfig(max_retries=max_retries, base_delay_ms=base_delay_ms, max_delay_ms=max_delay_ms)
+
+
+DEFAULT_RPC_RETRY_CONFIG = RetryConfig(
+    max_retries=DEFAULT_RPC_MAX_RETRIES,
+    base_delay_ms=DEFAULT_RPC_RETRY_BASE_MS,
+    max_delay_ms=DEFAULT_RPC_RETRY_MAX_MS,
+)
+DEFAULT_HTTP_RETRY_CONFIG = RetryConfig(
+    max_retries=DEFAULT_HTTP_MAX_RETRIES,
+    base_delay_ms=DEFAULT_HTTP_RETRY_BASE_MS,
+    max_delay_ms=DEFAULT_HTTP_RETRY_MAX_MS,
+)
+
+RUNTIME_HTTP_TIMEOUT_SEC = float(DEFAULT_HTTP_TIMEOUT_SEC)
+RUNTIME_HTTP_RETRY_CONFIG = DEFAULT_HTTP_RETRY_CONFIG
 
 
 def now_iso_utc() -> str:
@@ -151,6 +204,36 @@ def safe_div(numerator: float, denominator: float) -> float:
     return numerator / denominator
 
 
+def env_int(keys: Sequence[str], default: int, minimum: Optional[int] = None) -> int:
+    for key in keys:
+        raw = os.getenv(key)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            continue
+        if minimum is not None:
+            value = max(minimum, value)
+        return value
+    return default
+
+
+def env_float(keys: Sequence[str], default: float, minimum: Optional[float] = None) -> float:
+    for key in keys:
+        raw = os.getenv(key)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            value = float(raw.strip())
+        except ValueError:
+            continue
+        if minimum is not None:
+            value = max(minimum, value)
+        return value
+    return default
+
+
 def make_allowed_https_url(url: str, hosts: Sequence[str]) -> str:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https":
@@ -161,25 +244,62 @@ def make_allowed_https_url(url: str, hosts: Sequence[str]) -> str:
     return url
 
 
-def http_get_json(url: str) -> Any:
+def is_transient_error_text(value: str) -> bool:
+    return bool(TRANSIENT_ERROR_TEXT_RE.search(str(value or "")))
+
+
+def is_transient_http_error(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        if int(getattr(exc, "code", 0)) in TRANSIENT_HTTP_STATUS_CODES:
+            return True
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return True
+        if is_transient_error_text(str(reason or "")):
+            return True
+    return is_transient_error_text(str(exc))
+
+
+def is_transient_rpc_error(message: str) -> bool:
+    return is_transient_error_text(message)
+
+
+def retry_backoff_seconds(attempt: int, retry: RetryConfig) -> float:
+    cfg = clamp_retry_config(retry)
+    delay_ms = min(cfg.max_delay_ms, cfg.base_delay_ms * (2 ** max(0, int(attempt))))
+    return delay_ms / 1000.0
+
+
+def http_get_json(url: str, timeout_sec: Optional[float] = None, retry_config: Optional[RetryConfig] = None) -> Any:
     safe_url = make_allowed_https_url(url, ALLOWED_HTTP_HOSTS)
     req = urllib.request.Request(
         safe_url,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         method="GET",
     )
-    with urllib.request.urlopen(req, timeout=DEFAULT_HTTP_TIMEOUT_SEC) as resp:
-        total = 0
-        chunks: List[bytes] = []
-        while True:
-            chunk = resp.read(65_536)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > MAX_HTTP_BYTES:
-                raise ValueError(f"HTTP payload exceeded {MAX_HTTP_BYTES} bytes")
-            chunks.append(chunk)
-    return json.loads(b"".join(chunks).decode("utf-8"))
+    timeout = max(0.1, float(RUNTIME_HTTP_TIMEOUT_SEC if timeout_sec is None else timeout_sec))
+    retry = clamp_retry_config(retry_config or RUNTIME_HTTP_RETRY_CONFIG)
+    for attempt in range(retry.max_retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                total = 0
+                chunks: List[bytes] = []
+                while True:
+                    chunk = resp.read(65_536)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_HTTP_BYTES:
+                        raise ValueError(f"HTTP payload exceeded {MAX_HTTP_BYTES} bytes")
+                    chunks.append(chunk)
+            return json.loads(b"".join(chunks).decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            if attempt >= retry.max_retries or not is_transient_http_error(exc):
+                raise
+            time.sleep(retry_backoff_seconds(attempt, retry))
 
 
 def parse_cast_uint(raw: str) -> int:
@@ -233,7 +353,7 @@ def parse_address_list_from_array(raw: str) -> List[str]:
 
 
 class CastClient:
-    def __init__(self, rpc_url: str, timeout_sec: int = 20):
+    def __init__(self, rpc_url: str, timeout_sec: int = 20, retry_config: Optional[RetryConfig] = None):
         parsed = urllib.parse.urlparse(rpc_url)
         if parsed.scheme != "https":
             raise ValueError(f"RPC URL must be https: {rpc_url}")
@@ -241,8 +361,35 @@ class CastClient:
             raise ValueError(f"RPC host is not allowlisted: {parsed.hostname}")
         self.rpc_url = rpc_url
         self.timeout_sec = timeout_sec
+        self.retry_config = clamp_retry_config(retry_config or DEFAULT_RPC_RETRY_CONFIG)
         self._cache: Dict[Tuple[str, str, Tuple[str, ...]], str] = {}
         self._cache_lock = threading.Lock()
+
+    def _run_cast_cmd(self, cmd: Sequence[str], label: str) -> str:
+        for attempt in range(self.retry_config.max_retries + 1):
+            try:
+                proc = subprocess.run(
+                    list(cmd),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=self.timeout_sec,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                err_msg = f"{label} timed out after {self.timeout_sec}s"
+                retryable = True
+            else:
+                if proc.returncode == 0:
+                    return proc.stdout.strip()
+                err_msg = proc.stderr.strip() or proc.stdout.strip() or f"{label} failed"
+                retryable = is_transient_rpc_error(err_msg)
+
+            if attempt >= self.retry_config.max_retries or not retryable:
+                raise RuntimeError(err_msg)
+            time.sleep(retry_backoff_seconds(attempt, self.retry_config))
+
+        raise RuntimeError(f"{label} failed")
 
     def call(
         self,
@@ -260,27 +407,21 @@ class CastClient:
 
         key = (to_addr, signature, tuple(str(x) for x in args))
         if use_cache:
-            cached = self._cache.get(key)
+            with self._cache_lock:
+                cached = self._cache.get(key)
             if cached is not None:
                 return cached
 
         cmd = ["cast", "call", "--rpc-url", self.rpc_url, to_addr, signature, *map(str, args)]
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=self.timeout_sec,
-            check=False,
-        )
-        if proc.returncode != 0:
+        try:
+            out = self._run_cast_cmd(cmd, "cast call")
+        except RuntimeError:
             if allow_fail:
                 return None
-            raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "cast call failed")
-
-        out = proc.stdout.strip()
+            raise
         if use_cache:
-            self._cache[key] = out
+            with self._cache_lock:
+                self._cache[key] = out
         return out
 
     def estimate(
@@ -303,18 +444,7 @@ class CastClient:
             cmd.extend(["--value", value])
         cmd.extend([to_addr, signature])
         cmd.extend(map(str, args))
-
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=self.timeout_sec,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "cast estimate failed")
-        return proc.stdout.strip()
+        return self._run_cast_cmd(cmd, "cast estimate")
 
 
 def ensure_cast() -> None:
@@ -345,7 +475,7 @@ def fetch_token_spot_price_usd(token_address: str) -> Tuple[Optional[float], Opt
 
     try:
         payload = http_get_json(DEX_TOKEN_ENDPOINT.format(token=token))
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+    except (urllib.error.URLError, TimeoutError, socket.timeout, ValueError, json.JSONDecodeError):
         return None, None
     pairs = payload.get("pairs") or []
     if not isinstance(pairs, list) or not pairs:
@@ -379,7 +509,7 @@ def fetch_pair_market(pair_address: str) -> Optional[PairMarket]:
 
     try:
         payload = http_get_json(DEX_PAIR_ENDPOINT.format(pair=pair))
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+    except (urllib.error.URLError, TimeoutError, socket.timeout, ValueError, json.JSONDecodeError):
         return None
     rows = payload.get("pairs") or []
     if not isinstance(rows, list) or not rows:
@@ -951,24 +1081,39 @@ def score_pool(
     }
 
 
-def fetch_gas_price_wei(rpc_url: str) -> Optional[int]:
-    try:
-        proc = subprocess.run(
-            ["cast", "rpc", "eth_gasPrice", "--rpc-url", rpc_url],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if proc.returncode != 0:
+def fetch_gas_price_wei(rpc_url: str, retry_config: Optional[RetryConfig] = None) -> Optional[int]:
+    retry = clamp_retry_config(retry_config or DEFAULT_RPC_RETRY_CONFIG)
+    cmd = ["cast", "rpc", "eth_gasPrice", "--rpc-url", rpc_url]
+    for attempt in range(retry.max_retries + 1):
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            if attempt >= retry.max_retries:
+                return None
+            time.sleep(retry_backoff_seconds(attempt, retry))
+            continue
+
+        if proc.returncode == 0:
+            text = proc.stdout.strip()
+            try:
+                if text.startswith("0x"):
+                    return int(text, 16)
+                return int(text)
+            except ValueError:
+                return None
+
+        err_msg = proc.stderr.strip() or proc.stdout.strip()
+        if attempt >= retry.max_retries or not is_transient_rpc_error(err_msg):
             return None
-        text = proc.stdout.strip()
-        if text.startswith("0x"):
-            return int(text, 16)
-        return int(text)
-    except Exception:
-        return None
+        time.sleep(retry_backoff_seconds(attempt, retry))
+    return None
 
 
 def estimate_pool_gas(cast: CastClient, gauge: str, from_addr: str) -> List[Dict[str, Any]]:
@@ -1059,6 +1204,48 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-bribes", action="store_true")
     parser.add_argument("--include-gas-estimates", action="store_true")
     parser.add_argument("--cast-timeout", type=int, default=DEFAULT_TIMEOUT_SEC, help="Per-cast timeout in seconds")
+    parser.add_argument(
+        "--rpc-max-retries",
+        type=int,
+        default=env_int(("AERODROME_RPC_MAX_RETRIES", "SCAN_RPC_MAX_RETRIES"), DEFAULT_RPC_MAX_RETRIES, minimum=0),
+        help="Transient retry attempts for cast RPC calls",
+    )
+    parser.add_argument(
+        "--rpc-retry-base-ms",
+        type=int,
+        default=env_int(("AERODROME_RPC_RETRY_BASE_MS", "SCAN_RPC_RETRY_BASE_MS"), DEFAULT_RPC_RETRY_BASE_MS, minimum=1),
+        help="Base backoff delay in milliseconds for cast retries",
+    )
+    parser.add_argument(
+        "--rpc-retry-max-ms",
+        type=int,
+        default=env_int(("AERODROME_RPC_RETRY_MAX_MS", "SCAN_RPC_RETRY_MAX_MS"), DEFAULT_RPC_RETRY_MAX_MS, minimum=1),
+        help="Max backoff delay in milliseconds for cast retries",
+    )
+    parser.add_argument(
+        "--http-timeout-sec",
+        type=float,
+        default=env_float(("AERODROME_HTTP_TIMEOUT_SEC", "SCAN_HTTP_TIMEOUT_SEC"), float(DEFAULT_HTTP_TIMEOUT_SEC), minimum=0.1),
+        help="Per-request timeout in seconds for DexScreener HTTP calls",
+    )
+    parser.add_argument(
+        "--http-max-retries",
+        type=int,
+        default=env_int(("AERODROME_HTTP_MAX_RETRIES", "SCAN_HTTP_MAX_RETRIES"), DEFAULT_HTTP_MAX_RETRIES, minimum=0),
+        help="Transient retry attempts for DexScreener HTTP calls",
+    )
+    parser.add_argument(
+        "--http-retry-base-ms",
+        type=int,
+        default=env_int(("AERODROME_HTTP_RETRY_BASE_MS", "SCAN_HTTP_RETRY_BASE_MS"), DEFAULT_HTTP_RETRY_BASE_MS, minimum=1),
+        help="Base backoff delay in milliseconds for DexScreener retries",
+    )
+    parser.add_argument(
+        "--http-retry-max-ms",
+        type=int,
+        default=env_int(("AERODROME_HTTP_RETRY_MAX_MS", "SCAN_HTTP_RETRY_MAX_MS"), DEFAULT_HTTP_RETRY_MAX_MS, minimum=1),
+        help="Max backoff delay in milliseconds for DexScreener retries",
+    )
     parser.add_argument("--gas-from", default=ZERO_ADDRESS)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--out-json", default="runs/aerodrome-pool-intel/latest_report.json")
@@ -1071,8 +1258,24 @@ def main() -> int:
     args = parse_args()
     ensure_cast()
 
+    global RUNTIME_HTTP_TIMEOUT_SEC, RUNTIME_HTTP_RETRY_CONFIG
     cast_timeout = max(1, args.cast_timeout)
-    cast = CastClient(args.rpc_url, timeout_sec=cast_timeout)
+    cast_retry_config = clamp_retry_config(
+        RetryConfig(
+            max_retries=args.rpc_max_retries,
+            base_delay_ms=args.rpc_retry_base_ms,
+            max_delay_ms=args.rpc_retry_max_ms,
+        )
+    )
+    RUNTIME_HTTP_TIMEOUT_SEC = max(0.1, float(args.http_timeout_sec))
+    RUNTIME_HTTP_RETRY_CONFIG = clamp_retry_config(
+        RetryConfig(
+            max_retries=args.http_max_retries,
+            base_delay_ms=args.http_retry_base_ms,
+            max_delay_ms=args.http_retry_max_ms,
+        )
+    )
+    cast = CastClient(args.rpc_url, timeout_sec=cast_timeout, retry_config=cast_retry_config)
     voter = normalize_address(args.voter)
     factory_registry = normalize_address(args.factory_registry)
     voting_escrow = normalize_address(args.voting_escrow)
@@ -1088,6 +1291,13 @@ def main() -> int:
 
     print(f"[scan] voter={voter}")
     print(f"[scan] registry={factory_registry}")
+    print(
+        "[scan] retry config "
+        f"rpc={cast_retry_config.max_retries}x "
+        f"(base={cast_retry_config.base_delay_ms}ms,max={cast_retry_config.max_delay_ms}ms) "
+        f"http={RUNTIME_HTTP_RETRY_CONFIG.max_retries}x "
+        f"(base={RUNTIME_HTTP_RETRY_CONFIG.base_delay_ms}ms,max={RUNTIME_HTTP_RETRY_CONFIG.max_delay_ms}ms,timeout={RUNTIME_HTTP_TIMEOUT_SEC:.1f}s)"
+    )
 
     pools, resolved_pool_source = enumerate_pools(cast, args, token_filters)
     if not pools and not (token_filters and len(token_filters) == 2 and args.pool_source != "metadata"):
@@ -1106,7 +1316,7 @@ def main() -> int:
     now_ts = int(time.time())
     epoch_start = now_ts - (now_ts % SECONDS_PER_WEEK)
 
-    gas_price_wei = fetch_gas_price_wei(args.rpc_url)
+    gas_price_wei = fetch_gas_price_wei(args.rpc_url, retry_config=cast_retry_config)
     eth_price, _ = fetch_token_spot_price_usd(WETH_ADDRESS)
 
     def build_row(pool: str) -> Dict[str, Any]:
@@ -1402,6 +1612,14 @@ def main() -> int:
             "skip_market": args.skip_market,
             "skip_bribes": args.skip_bribes,
             "include_gas_estimates": args.include_gas_estimates,
+            "cast_timeout_sec": cast_timeout,
+            "rpc_max_retries": cast_retry_config.max_retries,
+            "rpc_retry_base_ms": cast_retry_config.base_delay_ms,
+            "rpc_retry_max_ms": cast_retry_config.max_delay_ms,
+            "http_timeout_sec": RUNTIME_HTTP_TIMEOUT_SEC,
+            "http_max_retries": RUNTIME_HTTP_RETRY_CONFIG.max_retries,
+            "http_retry_base_ms": RUNTIME_HTTP_RETRY_CONFIG.base_delay_ms,
+            "http_retry_max_ms": RUNTIME_HTTP_RETRY_CONFIG.max_delay_ms,
         },
         "protocol_summary": {
             "pool_count_scanned": len(rows),
