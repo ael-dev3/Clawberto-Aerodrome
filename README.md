@@ -122,6 +122,16 @@ If provider rate limits affect the default RPC, pass an alternate endpoint:
 SIM_RPC_URL=https://base-mainnet.public.blastapi.io bash skills/aerodrome-pool-intel/scripts/run_local_sims.sh
 ```
 
+## Local Validation
+
+Run the offline unit tests and parser checks before changing scan logic:
+
+```bash
+python -m unittest discover -s skills/aerodrome-pool-intel/tests
+python skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py --help
+python skills/aerodrome-pool-intel/scripts/aerodrome_contract_call.py --help
+```
+
 ## Heartbeat / Operational Runbook
 
 See `HEARTBEAT.md` for a 30-minute cron pattern and execution controls.
