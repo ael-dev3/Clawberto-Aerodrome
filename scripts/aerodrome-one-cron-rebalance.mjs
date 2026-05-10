@@ -615,11 +615,12 @@ function escapeTs(value) { return String(value).replaceAll('\\', '\\\\').replace
 function updatePositionsTs({ oldTokenId, newTokenId, lowerTick, upperTick, currentTick, used0, used1, cycleTxs }) {
   const file = path.join(REPO, 'src', 'positions.ts');
   let src = readFileSync(file, 'utf8');
-  const firstStart = src.indexOf('  {\n    tokenId:');
-  const secondStart = src.indexOf('  {\n    tokenId: 341002n', firstStart + 1);
-  if (firstStart < 0 || secondStart < 0) throw new Error('unable to locate managed position block');
+  const managedMarker = 'export const managedPositions: ManagedPositionRecord[] = [\n';
+  const managedAt = src.indexOf(managedMarker);
+  const managedEnd = src.indexOf('];', managedAt);
+  if (managedAt < 0 || managedEnd < 0) throw new Error('unable to locate managed positions array');
   const firstBlock = `  {\n    tokenId: ${newTokenId}n,\n    label: 'Hermes CL200 one-tick band',\n    origin: 'hermes-managed',\n    pair: 'LFI/USDC',\n    pool: CONTRACTS.pool,\n    gauge: CONTRACTS.gauge,\n    nftManager: CONTRACTS.nftManager,\n    depositor: WALLET_ADDRESS,\n    enteredAt: '${new Date().toISOString().slice(0, 10)}',\n    intendedRange: 'One CL200 tick, ${rangeLabel(lowerTick, upperTick)}, rebalanced from tick ${currentTick}',\n    notes: 'Rebalanced by the Hermes one-cron Aerodrome executor into the active one-tick band and staked into the Aerodrome gauge.',\n    deposited: {\n      lfiRaw: ${used0}n,\n      usdcRaw: ${used1}n,\n    },\n    setupTxs: [\n${txArrayLiteral(cycleTxs)}\n    ],\n  },\n`;
-  src = src.slice(0, firstStart) + firstBlock + src.slice(secondStart);
+  src = src.slice(0, managedAt + managedMarker.length) + firstBlock + src.slice(managedEnd);
 
   const historyMarker = 'export const positionHistory = [\n';
   const historyAt = src.indexOf(historyMarker);

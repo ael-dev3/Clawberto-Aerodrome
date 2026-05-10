@@ -244,7 +244,7 @@ Observed failure mode from the aggressive 30s one-tick run:
 
 - The dashboard tracked burned NFT `#345395` while several failed one-cron leftovers were still wallet-owned and unstaked.
 - Wallet-owned out-of-range leftovers found and closed: `#345349`, `#345384`, `#345412`; additional orphan discovered from one-cron logs/state and closed: `#345174`.
-- New active position after remediation: NFT `#345949`, range `-365000 → -364800`, staked in gauge and verified with `ownerOf(345949) == gauge` plus `stakedContains(wallet, 345949) == true`.
+- New active position after remediation: NFT `#346034`, range `-365200 → -365000`, staked in gauge and verified with `ownerOf(346034) == gauge` plus `stakedContains(wallet, 346034) == true`. Earlier recovered NFT `#345949` was also closed once it drifted out of range before final reentry.
 
 Workflow rules added from this incident:
 

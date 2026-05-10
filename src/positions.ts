@@ -25,7 +25,7 @@ export interface ManagedPositionRecord {
 
 export const managedPositions: ManagedPositionRecord[] = [
   {
-    tokenId: 345949n,
+    tokenId: 346034n,
     label: 'Hermes CL200 one-tick band',
     origin: 'hermes-managed',
     pair: 'LFI/USDC',
@@ -34,23 +34,40 @@ export const managedPositions: ManagedPositionRecord[] = [
     nftManager: CONTRACTS.nftManager,
     depositor: WALLET_ADDRESS,
     enteredAt: '2026-05-10',
-    intendedRange: 'One CL200 tick, -365000 to -364800, rebalanced from tick -364830',
-    notes: 'Recovered stale unstaked/out-of-range leftovers, reminted the active one-tick band, and verified gauge custody for the Hermes wallet.',
+    intendedRange: 'One CL200 tick, -365200 to -365000, rebalanced from tick -365078',
+    notes: 'Rebalanced by the hardened Hermes one-cron executor after #345949 drifted out of range; gauge custody and stakedContains were verified.',
     deposited: {
-      lfiRaw: 11792980598614777884120n,
-      usdcRaw: 9643987n,
+      lfiRaw: 54873682460197651997605n,
+      usdcRaw: 4495523n,
     },
     setupTxs: [
-      { label: 'Close orphan NFT #345174', hash: '0xcf7bf121af160b99afd40c4ef3eff1833544a8435f510eb88094cdf938e85528' },
-      { label: 'Balance LFI to USDC', hash: '0xcef19d5eaffca042b3d25f01a574bddaaf2522e3a52a883461db6af488c432a0' },
-      { label: 'Mint one-tick NFT #345949', hash: '0x5da76654f0dbb2e5c5fc05af716e28b4343466b7cb92d2d2203a9a2ac2205bce' },
-      { label: 'Approve NFT #345949 to gauge', hash: '0x4d4cfef84f127bb9ba846a064b7125aa717fe4d36167d838f3a86f724b16e8a4' },
-      { label: 'Stake NFT #345949', hash: '0x8fd290edbcffb905d3f96c6831bcd12e81feaf5ba0a4d17a20e692db9ef76c36' },
+      { label: 'Withdraw old NFT #345949', hash: '0xe405072849329589e31b97bec1d80ffc1e700bdbec1266b8bcd76178be9343e8' },
+      { label: 'Decrease old NFT #345949', hash: '0x6e2d80720a151cfd0f4f1f468ccb6e96bbbe01c435d702ad3118eee02e12fca7' },
+      { label: 'Collect old NFT #345949', hash: '0xe58cc900e9f3f3cf9bc9258992a36dc3bfa50b1c61623212b798640e2079252a' },
+      { label: 'Burn old NFT #345949', hash: '0x98cfabd53b93215a98eb7cc63d47d24b69e83ec732d795414d6974799692afcb' },
+      { label: 'Balance LFI to USDC', hash: '0x7f0dc47cef1ea9b75589832a57c213d1da9b83218a831e8b3a11ee573d76721b' },
+      { label: 'Mint one-tick NFT #346034', hash: '0x0bb3079a9ca3058a63a376ee1ecaef4be0d7b0e9fa88e251700c86f111026c41' },
+      { label: 'Approve NFT #346034 to gauge', hash: '0x09a797d4fb97521b9eaecd5380a7705bff9436dda20a94797e2df39e8b289885' },
+      { label: 'Stake NFT #346034', hash: '0xe630eca3c6a4a9b9621e5caf046eea45ecba0c7ade2497a898e219153da29596' },
     ],
   },
 ];
 
 export const positionHistory = [
+  {
+    date: '2026-05-10',
+    event: 'Exited previous Hermes NFT #345949',
+    detail: 'The recovered #345949 one-tick band drifted below range, so the hardened one-cron executor withdrew, collected, decreased, and burned it before reentry.',
+    tokenId: 345949n,
+    tx: '0x98cfabd53b93215a98eb7cc63d47d24b69e83ec732d795414d6974799692afcb' as `0x${string}`,
+  },
+  {
+    date: '2026-05-10',
+    event: 'Entered and staked one-tick NFT #346034',
+    detail: 'Range -365200 to -365000 around tick -365078. Mint used 54,873.68246 LFI and 4.495523 USDC; ownerOf == gauge and stakedContains == true.',
+    tokenId: 346034n,
+    tx: '0xe630eca3c6a4a9b9621e5caf046eea45ecba0c7ade2497a898e219153da29596' as `0x${string}`,
+  },
   {
     date: '2026-05-10',
     event: 'Recovered active staked NFT #345949',
@@ -75,7 +92,7 @@ export const positionHistory = [
   {
     date: '2026-05-10',
     event: 'Pre-remediation audit: no active tracked LP',
-    detail: 'Before cleanup/reentry, Base RPC and gauge checks found no active LFI/USDC Slipstream NFT. The dashboard now shows the recovered active #345949 above.',
+    detail: 'Before cleanup/reentry, Base RPC and gauge checks found no active LFI/USDC Slipstream NFT. The dashboard now shows the final active #346034 above.',
   },
   {
     date: '2026-05-10',
