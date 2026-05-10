@@ -16,6 +16,7 @@ runs/*/*.csv
 runs/*/*.txt
 runs/*/*.tmp
 runs/*/*.lock
+runs/*/*.mjs
 
 # OS files
 .DS_Store

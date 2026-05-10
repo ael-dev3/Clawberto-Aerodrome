@@ -27,6 +27,10 @@
     <string>1</string>
     <key>HERMES_RPC_URL</key>
     <string>https://base-rpc.publicnode.com</string>
+    <key>HERMES_REBALANCE_COOLDOWN_SECONDS</key>
+    <string>600</string>
+    <key>HERMES_MIN_POSITION_USD</key>
+    <string>1</string>
   </dict>
 </dict>
 </plist>

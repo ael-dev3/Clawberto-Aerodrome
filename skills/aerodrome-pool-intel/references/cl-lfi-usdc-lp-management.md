@@ -238,6 +238,24 @@ The Kittenswap repo pattern to copy is not the contract addresses, it is the con
 
 Until those commands exist, do not claim execution support. Use this reference to perform read-only checks and to build deterministic calldata plans only.
 
+## May 10, 2026 one-cron remediation findings
+
+Observed failure mode from the aggressive 30s one-tick run:
+
+- The dashboard tracked burned NFT `#345395` while several failed one-cron leftovers were still wallet-owned and unstaked.
+- Wallet-owned out-of-range leftovers found and closed: `#345349`, `#345384`, `#345412`; additional orphan discovered from one-cron logs/state and closed: `#345174`.
+- New active position after remediation: NFT `#345949`, range `-365000 → -364800`, staked in gauge and verified with `ownerOf(345949) == gauge` plus `stakedContains(wallet, 345949) == true`.
+
+Workflow rules added from this incident:
+
+1. Do not trust only `src/positions.ts` for cleanup. Build a candidate set from `src/positions.ts`, `runs/aerodrome-one-cron/state.json`, launchd logs, and `HERMES_EXTRA_TOKEN_IDS`.
+2. Failed mints must be persisted before approve/deposit. If stake fails or the tick moves out before deposit, close the fresh wallet-owned NFT immediately or persist it for next-cycle cleanup.
+3. Re-read `slot0` immediately before gauge `deposit`. One-tick CL200 ranges can move out of range between mint and stake.
+4. For wallet-owned out-of-range leftovers with `tokensOwed0 == tokensOwed1 == 0`, the successful close path was `decreaseLiquidity -> collect -> burn`; collect-first is still valid when owed fees are already nonzero, but a collect-only tx can waste gas if there is nothing currently owed.
+5. Use a churn brake: keep the scheduler at 30s if requested, but set `HERMES_REBALANCE_COOLDOWN_SECONDS` so range drift does not continuously burn gas. Stake remediation and orphan cleanup bypass the churn cooldown.
+6. Reject dust mints with `HERMES_MIN_POSITION_USD`; otherwise a drained wallet can mint microscopic positions that cannot justify gas.
+7. A verified on-chain LP change is not complete until `src/positions.ts` is updated, tests/build pass, the commit is pushed, Pages deploys, and the live dashboard renders the new state.
+
 ## Hard failure rules
 
 - Do not operate from truncated addresses.

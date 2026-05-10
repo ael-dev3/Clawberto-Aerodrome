@@ -4,6 +4,8 @@ set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.foundry/bin"
 export HERMES_LP_EXECUTE=1
 export HERMES_RPC_URL="${HERMES_RPC_URL:-https://base-rpc.publicnode.com}"
+export HERMES_REBALANCE_COOLDOWN_SECONDS="${HERMES_REBALANCE_COOLDOWN_SECONDS:-600}"
+export HERMES_MIN_POSITION_USD="${HERMES_MIN_POSITION_USD:-1}"
 
 REPO="/Users/marko/.openclaw/workspace/Clawberto-Aerodrome"
 RUN_DIR="$REPO/runs/aerodrome-one-cron"

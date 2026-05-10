@@ -11,4 +11,6 @@ When a future execution adapter enters, exits, claims, rebalances, burns, or res
 - history of previous LP positions and terminal status
 - tx hashes and timestamps for verified state-changing actions
 
-The current Hermes skill is planning-only. It must still include dashboard-sync as a required future post-action gate in execution adapter design, but it should not modify website files directly unless the user asks for website work in this repo.
+The current planning skill should include dashboard-sync as a required future post-action gate. The signer-backed one-cron executor in this repo is the current exception: when it performs a verified LP state change, it must modify `src/positions.ts`, run `npm test && npm run build`, commit/push to `main`, and wait for Pages before the cycle is considered complete.
+
+If a GitHub push is rejected because the remote moved, resolve the rebase before reporting completion. A verified on-chain LP change with an unpushed dashboard is an incomplete cycle.

@@ -113,6 +113,9 @@ bash skills/hermes-lp-manager/scripts/hermes_heartbeat.sh
 - `HERMES_MIN_TVL_USD` controls market-liquidity warnings.
 - `HERMES_OUT_DIR` defaults to `runs/hermes-lp-manager`.
 - `HERMES_LOOP` and `HERMES_LOOP_INTERVAL_SECONDS` control daemon-style runs.
+- `HERMES_REBALANCE_COOLDOWN_SECONDS` throttles one-tick range churn while preserving stake/orphan remediation.
+- `HERMES_MIN_POSITION_USD` prevents dust mints after gas/fee drain.
+- `HERMES_EXTRA_TOKEN_IDS` comma-seeds orphan cleanup when logs/state missed a failed mint.
 
 ## Safety Rules
 

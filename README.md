@@ -12,7 +12,8 @@ This repo now includes a Hermes LP control-plane skill for cron-safe monitoring 
 - Includes a GeckoTerminal-backed LFI price candle chart with each readable NFT range projected as live price bands.
 - Adds bottom-of-page LFI analytics: 1h/2h/6h/12h/24h/48h price windows, pool-side USD sizing, pending emissions, APR stack, IL/hold delta, volatility-based range suggestion, and a manual-human-vs-AI-agent profitability index.
 - The head-to-head score shows each wallet's confirmed LP position size, tracked wallet value, current APR, pending emissions, LFI/USDC LP balance split, range headroom on each side, and confirmed LP NFT count. A wallet always receives ERC-20 balance tracking, but only receives LP credit when the dashboard can attribute a live NFT to that wallet/depositor.
-- Current LP registry: empty. Base RPC/log checks show Clawberto NFT `#341439` was withdrawn and burned, while the stale Ael `#341002` reference is not a live LFI/USDC stake for either tracked wallet.
+- Current LP registry: active Hermes NFT `#345949`, range `-365000 → -364800`, staked in the CL gauge with `stakedContains(0xC979...cFEA, 345949) == true` at the remediation check. The previous empty-registry state was corrected after closing stale failed one-cron leftovers.
+- Closed stale leftovers during remediation: wallet-owned unstaked NFTs `#345349`, `#345384`, `#345412`, plus additional orphan `#345174` discovered from one-cron logs/state.
 - Source of truth for displayed active positions: `src/positions.ts`. Every future Aerodrome LP enter/exit must update this registry and redeploy the GitHub Pages site.
 
 ## Scope
