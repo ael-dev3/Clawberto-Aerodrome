@@ -8,6 +8,8 @@ __pycache__/
 # Runtime output
 runs/*/*.json
 runs/*/*.csv
+runs/*/*.txt
+runs/*/*.tmp
 
 # OS files
 .DS_Store
