@@ -25,7 +25,7 @@ export interface ManagedPositionRecord {
 
 export const managedPositions: ManagedPositionRecord[] = [
   {
-    tokenId: 346390n,
+    tokenId: 346421n,
     label: 'Hermes CL200 one-tick band',
     origin: 'hermes-managed',
     pair: 'LFI/USDC',
@@ -34,22 +34,36 @@ export const managedPositions: ManagedPositionRecord[] = [
     nftManager: CONTRACTS.nftManager,
     depositor: WALLET_ADDRESS,
     enteredAt: '2026-05-10',
-    intendedRange: 'One CL200 tick, -364400 to -364200, rebalanced from tick -364368',
+    intendedRange: 'One CL200 tick, -364600 to -364400, rebalanced from tick -364425',
     notes: 'Rebalanced by the Hermes one-cron Aerodrome executor into the active one-tick band and staked into the Aerodrome gauge.',
     deposited: {
-      lfiRaw: 0n,
-      usdcRaw: 0n,
+      lfiRaw: 9732652667442594946777n,
+      usdcRaw: 10279142n,
     },
     setupTxs: [
-      { label: 'Balance LFI to USDC', hash: '0xc648d3346f5238e7976b13770348ebb8c1eaab83a15319d688b318e1828f7d79' },
-      { label: 'Mint one-tick NFT #346390', hash: '0x7dd2cc09f49aed307fe71a6daf50dc79e7deeb6cb7048d10dccb82a5ef904bbe' },
-      { label: 'Approve NFT #346390 to gauge', hash: '0x176a1d17cd1f38c3a8ee4a70edf67e590c4937960c5b5012a7317714c7270280' },
-      { label: 'Stake NFT #346390', hash: '0x0356ed36af1b6a991788c7b0e333fb7d058ca68323bfd0d53fd03fc9633c77ea' },
+      { label: 'Balance LFI to USDC', hash: '0x52b156c9c4de0951cf1f20859222349e07206ce8ea272d39d5da9ee29788a801' },
+      { label: 'Mint one-tick NFT #346421', hash: '0xfad3a17e3a3ff2f14ca7f20334e2d96a2c8877c086f32ece40b08a754db517b5' },
+      { label: 'Approve NFT #346421 to gauge', hash: '0x5cf01cc94dbda367daf254a57d15350875440a3ca8c1b6ef776b6930ae402a7c' },
+      { label: 'Stake NFT #346421', hash: '0x3aacebf5114fdb3740ecec2cf6d1e78f210951d61be2aa5164479d68d432aaf1' },
     ],
   },
 ];
 
 export const positionHistory = [
+  {
+    date: '2026-05-10',
+    event: 'Exited previous Hermes NFT #346390',
+    detail: 'One-cron rebalance closed the previous managed range before entering the 2% one-tick band.',
+    tokenId: 346390n,
+    tx: '0x52b156c9c4de0951cf1f20859222349e07206ce8ea272d39d5da9ee29788a801' as `0x${string}`,
+  },
+  {
+    date: '2026-05-10',
+    event: 'Entered and staked one-tick NFT #346421',
+    detail: 'Range -364600 to -364400 around tick -364425. Mint used 9,732.652667 LFI and 10.279142 USDC.',
+    tokenId: 346421n,
+    tx: '0x3aacebf5114fdb3740ecec2cf6d1e78f210951d61be2aa5164479d68d432aaf1' as `0x${string}`,
+  },
   {
     date: '2026-05-10',
     event: 'Exited previous Hermes NFT #346303',
