@@ -47,6 +47,9 @@ const SLIPPAGE_BPS = 500n;
 const ETH_GAS_RESERVE_WEI = 1_500_000_000_000_000n; // ~a few USD on Base while leaving room for burst txs.
 const MIN_ETH_SWAP_WEI = 50_000_000_000_000n;
 const MIN_REBALANCE_USD = 0.15;
+const MIN_POSITION_USD = Number(process.env.HERMES_MIN_POSITION_USD || '1');
+const REBALANCE_COOLDOWN_SECONDS = Number(process.env.HERMES_REBALANCE_COOLDOWN_SECONDS || '600');
+const EXTRA_TOKEN_IDS = (process.env.HERMES_EXTRA_TOKEN_IDS || '').split(',').map((id) => id.trim()).filter(Boolean);
 const MAX_UINT128 = (1n << 128n) - 1n;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -189,6 +192,14 @@ function stringifyJson(value) { return JSON.stringify(value, (_, v) => typeof v 
 function writeJson(file, value) { writeFileSync(file, stringifyJson(value) + '\n'); }
 function readJson(file, fallback) { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return fallback; } }
 function run(cmd, opts = {}) { return execSync(cmd, { cwd: REPO, encoding: 'utf8', stdio: opts.stdio || 'pipe', env: { ...process.env, ...opts.env } }); }
+function tokenIdsFromText(text) { return [...text.matchAll(/(?:tokenId[: #]*|NFT #|sim#)(\d{5,})/g)].map((match) => match[1]); }
+function positionUsdValue({ lfiRaw = 0n, usdcRaw = 0n, tick }) { return Number(formatUnits(lfiRaw, 18)) * tickPrice(tick) + Number(formatUnits(usdcRaw, 6)); }
+function recentRebalanceAgeSeconds() {
+  const state = readJson(STATE_PATH, {});
+  if (!['REBALANCED', 'REMEDIATED'].includes(state.status) || !state.at) return Infinity;
+  const atMs = Date.parse(state.at);
+  return Number.isFinite(atMs) ? (Date.now() - atMs) / 1000 : Infinity;
+}
 
 function acquireLock() {
   ensureRunDir();
@@ -295,6 +306,35 @@ function currentManagedTokenId() {
   return Number(match[1]);
 }
 
+function candidateManagedTokenIds() {
+  const ids = new Set(EXTRA_TOKEN_IDS);
+  const current = currentManagedTokenId();
+  if (current) ids.add(String(current));
+  for (const file of [
+    path.join(REPO, 'src', 'positions.ts'),
+    STATE_PATH,
+    path.join(RUN_DIR, 'launchd.out.log'),
+    path.join(RUN_DIR, 'launchd.err.log'),
+  ]) {
+    try {
+      for (const id of tokenIdsFromText(readFileSync(file, 'utf8'))) ids.add(id);
+    } catch {}
+  }
+  return [...ids].map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0).sort((a, b) => a - b);
+}
+
+async function readPositionMaybe(tokenId) {
+  try {
+    return await readPosition(tokenId);
+  } catch (error) {
+    return { tokenId: BigInt(tokenId), error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function isManagedPoolPosition(pos) {
+  return !pos.error && sameAddress(pos.token0, CONTRACTS.lfi) && sameAddress(pos.token1, CONTRACTS.usdc) && pos.tickSpacing === TICK_SPACING;
+}
+
 async function ensureAllowance(token, spender, amount, symbol, labelPrefix = 'Approve') {
   const allowance = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'allowance', args: [WALLET, spender] });
   if (allowance >= amount) return;
@@ -370,10 +410,17 @@ async function exitOldPosition(tokenId) {
     throw new Error(`position identity mismatch for #${tokenId}`);
   }
 
+  return closeManagedPosition(tokenId, `old NFT #${tokenId}`);
+}
+
+async function closeManagedPosition(tokenId, label = `NFT #${tokenId}`) {
+  let pos = await readPosition(tokenId);
+  if (!isManagedPoolPosition(pos)) throw new Error(`position identity mismatch for #${tokenId}`);
+
   if (sameAddress(pos.owner, CONTRACTS.gauge)) {
     const contains = await stakedContains(tokenId);
     if (!contains) throw new Error(`gauge owns #${tokenId} but depositor membership is false`);
-    await simulateAndSend({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'withdraw', args: [BigInt(tokenId)], label: `Withdraw old NFT #${tokenId}` });
+    await simulateAndSend({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'withdraw', args: [BigInt(tokenId)], label: `Withdraw ${label}` });
     for (let attempt = 1; attempt <= 12; attempt += 1) {
       pos = await readPosition(tokenId);
       if (sameAddress(pos.owner, WALLET)) break;
@@ -381,46 +428,60 @@ async function exitOldPosition(tokenId) {
     }
   }
 
+  pos = await readPosition(tokenId);
   if (!sameAddress(pos.owner, WALLET)) throw new Error(`cannot manage #${tokenId}, owner=${pos.owner}`);
 
-  await simulateAndSend({
-    address: CONTRACTS.nftManager,
-    abi: nftManagerAbi,
-    functionName: 'collect',
-    args: [{ tokenId: BigInt(tokenId), recipient: WALLET, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
-    label: `Collect old NFT #${tokenId}`,
-  });
-
-  pos = await readPosition(tokenId);
   if (pos.liquidity > 0n) {
     await simulateAndSend({
       address: CONTRACTS.nftManager,
       abi: nftManagerAbi,
       functionName: 'decreaseLiquidity',
       args: [{ tokenId: BigInt(tokenId), liquidity: pos.liquidity, amount0Min: 0n, amount1Min: 0n, deadline: unixDeadline() }],
-      label: `Decrease old NFT #${tokenId}`,
-    });
-    await simulateAndSend({
-      address: CONTRACTS.nftManager,
-      abi: nftManagerAbi,
-      functionName: 'collect',
-      args: [{ tokenId: BigInt(tokenId), recipient: WALLET, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
-      label: `Final collect old NFT #${tokenId}`,
+      label: `Decrease ${label}`,
     });
   }
+
+  await simulateAndSend({
+    address: CONTRACTS.nftManager,
+    abi: nftManagerAbi,
+    functionName: 'collect',
+    args: [{ tokenId: BigInt(tokenId), recipient: WALLET, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
+    label: `Collect ${label}`,
+  });
 
   let burned = false;
   try {
     const after = await readPosition(tokenId);
     if (after.liquidity === 0n && after.tokensOwed0 === 0n && after.tokensOwed1 === 0n) {
-      await simulateAndSend({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'burn', args: [BigInt(tokenId)], label: `Burn old NFT #${tokenId}` });
+      await simulateAndSend({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'burn', args: [BigInt(tokenId)], label: `Burn ${label}` });
       burned = true;
+    } else {
+      console.log(`burn skipped for #${tokenId}: liquidity=${after.liquidity} owed0=${after.tokensOwed0} owed1=${after.tokensOwed1}`);
     }
   } catch (error) {
     console.log(`burn skipped for #${tokenId}: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   return { exited: true, burned };
+}
+
+async function cleanupOrphanPositions(exceptTokenId) {
+  const pool = await readPool();
+  const closed = [];
+  for (const tokenId of candidateManagedTokenIds()) {
+    if (tokenId === exceptTokenId) continue;
+    const pos = await readPositionMaybe(tokenId);
+    if (!isManagedPoolPosition(pos)) continue;
+    const managedByWallet = sameAddress(pos.owner, WALLET) || (sameAddress(pos.owner, CONTRACTS.gauge) && await stakedContains(tokenId));
+    if (!managedByWallet) continue;
+    const state = rangeState(pool.currentTick, pos.tickLower, pos.tickUpper);
+    const emptyWalletNft = sameAddress(pos.owner, WALLET) && pos.liquidity === 0n && pos.tokensOwed0 === 0n && pos.tokensOwed1 === 0n;
+    if (state !== 'IN_RANGE' || emptyWalletNft) {
+      await closeManagedPosition(tokenId, `orphan/out-of-range NFT #${tokenId}`);
+      closed.push({ tokenId, state, range: { lowerTick: pos.tickLower, upperTick: pos.tickUpper } });
+    }
+  }
+  return closed;
 }
 
 async function convertEthExcessToUsdc() {
@@ -499,7 +560,10 @@ async function mintAndStake(lowerTick, upperTick) {
   };
   const sim = await publicClient.simulateContract({ account, address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'mint', args: [baseParams], chain: base });
   const [simTokenId, simLiquidity, simAmount0, simAmount1] = sim.result;
-  if (simLiquidity === 0n || simAmount0 === 0n || simAmount1 === 0n) throw new Error(`mint sim produced zero liquidity/amounts: ${sim.result}`);
+  const simUsd = positionUsdValue({ lfiRaw: simAmount0, usdcRaw: simAmount1, tick: pool.currentTick });
+  if (simLiquidity === 0n || simAmount0 === 0n || simAmount1 === 0n || simUsd < MIN_POSITION_USD) {
+    throw new Error(`mint sim below minimum liquidity/amounts: liquidity=${simLiquidity} amount0=${simAmount0} amount1=${simAmount1} usd=${simUsd.toFixed(6)}`);
+  }
 
   const params = { ...baseParams, amount0Min: slippageMin(simAmount0), amount1Min: slippageMin(simAmount1), deadline: unixDeadline() };
   const { receipt, hash } = await simulateAndSend({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'mint', args: [params], label: `Mint one-tick NFT sim#${simTokenId}` });
@@ -508,13 +572,32 @@ async function mintAndStake(lowerTick, upperTick) {
   const newTokenId = mintLog?.args?.tokenId ?? simTokenId;
   const mintTx = txs.find((tx) => tx.hash === hash);
   if (mintTx) mintTx.label = `Mint one-tick NFT #${newTokenId}`;
+  writeJson(STATE_PATH, { status: 'MINTED_PENDING_STAKE', at: nowIso(), tokenId: newTokenId, range: { lowerTick, upperTick }, mintHash: hash, txs });
 
   const afterMint = await readBalances();
   const used0 = before.lfi - afterMint.lfi;
   const used1 = before.usdc - afterMint.usdc;
 
-  await simulateAndSend({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'approve', args: [CONTRACTS.gauge, newTokenId], label: `Approve NFT #${newTokenId} to gauge` });
-  await simulateAndSend({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'deposit', args: [newTokenId], label: `Stake NFT #${newTokenId}` });
+  const beforeStakePool = await readPool();
+  const mintedPos = await readPosition(newTokenId);
+  if (rangeState(beforeStakePool.currentTick, mintedPos.tickLower, mintedPos.tickUpper) !== 'IN_RANGE') {
+    await closeManagedPosition(Number(newTokenId), `fresh out-of-range NFT #${newTokenId}`);
+    throw new Error(`fresh mint #${newTokenId} moved out of range before stake at tick ${beforeStakePool.currentTick}`);
+  }
+
+  try {
+    await simulateAndSend({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'approve', args: [CONTRACTS.gauge, newTokenId], label: `Approve NFT #${newTokenId} to gauge` });
+    await simulateAndSend({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'deposit', args: [newTokenId], label: `Stake NFT #${newTokenId}` });
+  } catch (error) {
+    writeJson(STATE_PATH, { status: 'STAKE_FAILED_CLEANUP_PENDING', at: nowIso(), tokenId: newTokenId, error: error instanceof Error ? error.message : String(error), txs });
+    try {
+      const failedPos = await readPosition(newTokenId);
+      if (sameAddress(failedPos.owner, WALLET)) await closeManagedPosition(Number(newTokenId), `unstaked failed NFT #${newTokenId}`);
+    } catch (cleanupError) {
+      console.log(`failed stake cleanup skipped for #${newTokenId}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    }
+    throw error;
+  }
 
   const verifiedOwner = await publicClient.readContract({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'ownerOf', args: [newTokenId] });
   const verifiedStake = await stakedContains(newTokenId);
@@ -622,6 +705,7 @@ async function rebalance(reason) {
   txs = [];
   const oldTokenId = currentManagedTokenId();
   const stateBefore = await statusPayload();
+  const cleanup = await cleanupOrphanPositions(oldTokenId);
 
   if (oldTokenId) await exitOldPosition(oldTokenId);
   await convertEthExcessToUsdc();
@@ -651,6 +735,7 @@ async function rebalance(reason) {
     used: { lfiRaw: mint.used0.toString(), usdcRaw: mint.used1.toString(), lfi: fmt(mint.used0, 18, 6), usdc: fmt(mint.used1, 6, 6) },
     balanceAction: balanceActions.at(-1),
     balanceActions,
+    cleanup,
     txs,
     repo,
     before: stateBefore,
@@ -678,6 +763,14 @@ async function decideAndMaybeRun() {
 
   if (!reason) {
     const hold = { status: 'HOLD', at: nowIso(), statusSnapshot: status };
+    writeJson(STATE_PATH, hold);
+    console.log(stringifyJson(hold));
+    return hold;
+  }
+
+  const cooldownApplies = (reason.startsWith('range ') || reason.startsWith('out of range')) && recentRebalanceAgeSeconds() < REBALANCE_COOLDOWN_SECONDS;
+  if (cooldownApplies) {
+    const hold = { status: 'HOLD_COOLDOWN', reason, cooldownSeconds: REBALANCE_COOLDOWN_SECONDS, at: nowIso(), statusSnapshot: status };
     writeJson(STATE_PATH, hold);
     console.log(stringifyJson(hold));
     return hold;

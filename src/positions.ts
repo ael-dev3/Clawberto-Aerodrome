@@ -1,4 +1,6 @@
 import type { Address } from 'viem';
+import { CONTRACTS, WALLET_ADDRESS } from './config';
+
 
 export type PositionOrigin = 'hermes-managed' | 'ael-existing' | 'historical';
 
@@ -21,13 +23,59 @@ export interface ManagedPositionRecord {
   };
 }
 
-export const managedPositions: ManagedPositionRecord[] = [];
+export const managedPositions: ManagedPositionRecord[] = [
+  {
+    tokenId: 345949n,
+    label: 'Hermes CL200 one-tick band',
+    origin: 'hermes-managed',
+    pair: 'LFI/USDC',
+    pool: CONTRACTS.pool,
+    gauge: CONTRACTS.gauge,
+    nftManager: CONTRACTS.nftManager,
+    depositor: WALLET_ADDRESS,
+    enteredAt: '2026-05-10',
+    intendedRange: 'One CL200 tick, -365000 to -364800, rebalanced from tick -364830',
+    notes: 'Recovered stale unstaked/out-of-range leftovers, reminted the active one-tick band, and verified gauge custody for the Hermes wallet.',
+    deposited: {
+      lfiRaw: 11792980598614777884120n,
+      usdcRaw: 9643987n,
+    },
+    setupTxs: [
+      { label: 'Close orphan NFT #345174', hash: '0xcf7bf121af160b99afd40c4ef3eff1833544a8435f510eb88094cdf938e85528' },
+      { label: 'Balance LFI to USDC', hash: '0xcef19d5eaffca042b3d25f01a574bddaaf2522e3a52a883461db6af488c432a0' },
+      { label: 'Mint one-tick NFT #345949', hash: '0x5da76654f0dbb2e5c5fc05af716e28b4343466b7cb92d2d2203a9a2ac2205bce' },
+      { label: 'Approve NFT #345949 to gauge', hash: '0x4d4cfef84f127bb9ba846a064b7125aa717fe4d36167d838f3a86f724b16e8a4' },
+      { label: 'Stake NFT #345949', hash: '0x8fd290edbcffb905d3f96c6831bcd12e81feaf5ba0a4d17a20e692db9ef76c36' },
+    ],
+  },
+];
 
 export const positionHistory = [
   {
     date: '2026-05-10',
-    event: 'On-chain audit: no active tracked LP',
-    detail: 'Base RPC and current gauge NFT checks found no active LFI/USDC Slipstream NFT for either tracked wallet. Wallet ERC-20 balances still render live at the top of the dashboard.',
+    event: 'Recovered active staked NFT #345949',
+    detail: 'Cleaned stale unstaked leftovers, balanced inventory, minted the current one-tick band -365000 to -364800, and verified ownerOf == gauge plus stakedContains == true.',
+    tokenId: 345949n,
+    tx: '0x8fd290edbcffb905d3f96c6831bcd12e81feaf5ba0a4d17a20e692db9ef76c36' as `0x${string}`,
+  },
+  {
+    date: '2026-05-10',
+    event: 'Closed stale unstaked NFTs #345349, #345384, #345412',
+    detail: 'Collected/decreased/burned the failed one-cron leftovers that were wallet-owned and not gauge staked; recovered principal and fees back to the wallet before reentry.',
+    tokenId: 345349n,
+    tx: '0xe709b36ac74a566f57b3d8dd9ce86ab51a69c2f00da73a070a2895fea39bb298' as `0x${string}`,
+  },
+  {
+    date: '2026-05-10',
+    event: 'Closed additional orphan NFT #345174',
+    detail: 'Improved cron orphan discovery found another wallet-owned out-of-range NFT from failed stake flow and closed it before minting #345949.',
+    tokenId: 345174n,
+    tx: '0xcf7bf121af160b99afd40c4ef3eff1833544a8435f510eb88094cdf938e85528' as `0x${string}`,
+  },
+  {
+    date: '2026-05-10',
+    event: 'Pre-remediation audit: no active tracked LP',
+    detail: 'Before cleanup/reentry, Base RPC and gauge checks found no active LFI/USDC Slipstream NFT. The dashboard now shows the recovered active #345949 above.',
   },
   {
     date: '2026-05-10',
