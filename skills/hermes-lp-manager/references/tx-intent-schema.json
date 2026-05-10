@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hermes transaction intent",
+  "type": "object",
+  "required": ["phase", "target", "signature", "args", "sender", "status", "note"],
+  "additionalProperties": false,
+  "properties": {
+    "phase": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "args": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sender": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["blocked", "needs_simulation", "needs_parameters"]
+    },
+    "note": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
