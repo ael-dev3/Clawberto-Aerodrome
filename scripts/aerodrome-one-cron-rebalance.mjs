@@ -471,6 +471,10 @@ async function balanceInventoryToRange(currentTick, lowerTick, upperTick) {
 }
 
 async function mintAndStake(lowerTick, upperTick) {
+  const pool = await readPool();
+  if (rangeState(pool.currentTick, lowerTick, upperTick) !== 'IN_RANGE') {
+    throw new Error(`stale mint range ${lowerTick}-${upperTick} for current tick ${pool.currentTick}`);
+  }
   let before = await readBalances();
   const amount0Desired = before.lfi;
   const amount1Desired = before.usdc;
@@ -617,15 +621,25 @@ async function rebalance(reason) {
   initSigner();
   txs = [];
   const oldTokenId = currentManagedTokenId();
-  const pool = await readPool();
-  const target = desiredRange(pool.currentTick);
   const stateBefore = await statusPayload();
 
   if (oldTokenId) await exitOldPosition(oldTokenId);
   await convertEthExcessToUsdc();
-  const balanceAction = await balanceInventoryToRange(pool.currentTick, target.lowerTick, target.upperTick);
+
+  let planningPool = await readPool();
+  let target = desiredRange(planningPool.currentTick);
+  const balanceActions = [];
+  balanceActions.push(await balanceInventoryToRange(planningPool.currentTick, target.lowerTick, target.upperTick));
+
+  planningPool = await readPool();
+  const latestTarget = desiredRange(planningPool.currentTick);
+  if (latestTarget.lowerTick !== target.lowerTick || latestTarget.upperTick !== target.upperTick) {
+    target = latestTarget;
+    balanceActions.push(await balanceInventoryToRange(planningPool.currentTick, target.lowerTick, target.upperTick));
+  }
+
   const mint = await mintAndStake(target.lowerTick, target.upperTick);
-  updatePositionsTs({ oldTokenId, newTokenId: mint.newTokenId, lowerTick: target.lowerTick, upperTick: target.upperTick, currentTick: pool.currentTick, used0: mint.used0, used1: mint.used1, cycleTxs: txs });
+  updatePositionsTs({ oldTokenId, newTokenId: mint.newTokenId, lowerTick: target.lowerTick, upperTick: target.upperTick, currentTick: planningPool.currentTick, used0: mint.used0, used1: mint.used1, cycleTxs: txs });
   const repo = commitAndPush(mint.newTokenId);
   const stateAfter = await statusPayload();
   const result = {
@@ -635,7 +649,8 @@ async function rebalance(reason) {
     newTokenId: mint.newTokenId.toString(),
     range: target,
     used: { lfiRaw: mint.used0.toString(), usdcRaw: mint.used1.toString(), lfi: fmt(mint.used0, 18, 6), usdc: fmt(mint.used1, 6, 6) },
-    balanceAction,
+    balanceAction: balanceActions.at(-1),
+    balanceActions,
     txs,
     repo,
     before: stateBefore,
