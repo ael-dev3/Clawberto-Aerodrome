@@ -1,0 +1,33 @@
+{
+  "chain_id": 8453,
+  "depositor": "0x1111111111111111111111111111111111111111",
+  "errors": [],
+  "gauge": {
+    "address": "0xe9c73937382c621770f5b7018a407c0749df6aae",
+    "deposit_timestamp": 0,
+    "earned_wei": 0,
+    "left_wei": 0,
+    "reward_rate_wei_per_sec": 0,
+    "staked_contains": false
+  },
+  "generated_at_utc": "2026-05-10T00:00:00Z",
+  "pool": {
+    "address": "0x8343c68279587498526114e6385f0a87f248e0d9",
+    "sqrt_price_x96": 1,
+    "tick": -365900,
+    "unlocked": true
+  },
+  "position": {
+    "liquidity": 8743302714174061,
+    "owner": "0x1111111111111111111111111111111111111111",
+    "tick_lower": -367400,
+    "tick_spacing": 200,
+    "tick_upper": -365200,
+    "token0": "0x3722264aB15a1dfCe5a5af89e6547F7949A8ABA3",
+    "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "token_id": 341002,
+    "tokens_owed0": 0,
+    "tokens_owed1": 0
+  },
+  "source": "fixture"
+}
