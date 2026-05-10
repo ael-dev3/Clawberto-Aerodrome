@@ -16,9 +16,23 @@ import { buildRangeOverlays, formatChartPrice, type LpRangeOverlay } from './lp-
 import type { DashboardSnapshot } from './rpc';
 
 const CHART_HEIGHT = 340;
-let activeChart: IChartApi | undefined;
-let activeResizeObserver: ResizeObserver | undefined;
-let activeRenderToken = 0;
+const COMPACT_CHART_HEIGHT = 220;
+let nextRenderToken = 0;
+
+interface ChartMountState {
+  chart?: IChartApi;
+  resizeObserver?: ResizeObserver;
+  renderToken: number;
+}
+
+export interface LpRangeChartOptions {
+  positions?: DashboardSnapshot['positions'];
+  compact?: boolean;
+  emptyTitle?: string;
+  emptyDescription?: string;
+}
+
+const chartStates = new WeakMap<HTMLElement, ChartMountState>();
 
 function escapeHtml(value: string): string {
   return value
@@ -33,8 +47,8 @@ function currentPrice(snapshot: DashboardSnapshot): number {
   return tickToAdjustedPrice(snapshot.pool.currentTick, 18, 6);
 }
 
-function chartHeight(chartNode: HTMLElement): number {
-  return Math.max(300, Math.floor(chartNode.clientHeight || CHART_HEIGHT));
+function chartHeight(chartNode: HTMLElement, compact = false): number {
+  return Math.max(compact ? 200 : 300, Math.floor(chartNode.clientHeight || (compact ? COMPACT_CHART_HEIGHT : CHART_HEIGHT)));
 }
 
 function toSeriesData(candles: GeckoCandle[]): CandlestickData<Time>[] {
@@ -57,9 +71,9 @@ function edgeData(candles: GeckoCandle[], value: number): Array<{ time: UTCTimes
   ];
 }
 
-function renderLoading(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[]): string {
+function renderLoading(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[], compact = false): string {
   return `
-    <div class="chart-state">
+    <div class="chart-state${compact ? ' compact-state' : ''}">
       <div class="loader small"></div>
       <div>
         <strong>Loading GeckoTerminal candles</strong>
@@ -69,21 +83,21 @@ function renderLoading(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[]):
   `;
 }
 
-function renderLegend(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[], source: string): string {
+function renderLegend(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[], source: string, options: LpRangeChartOptions = {}): string {
   const price = currentPrice(snapshot);
   return `
-    <aside class="chart-side">
+    <aside class="chart-side${options.compact ? ' compact-chart-side' : ''}">
       <div class="chart-metric">
         <span>Current LFI price</span>
         <strong>$${formatChartPrice(price)}</strong>
         <small>Tick ${tickLabel(snapshot.pool.currentTick)}</small>
       </div>
-      <div class="chart-source">${source}</div>
+      ${options.compact ? '' : `<div class="chart-source">${source}</div>`}
       <div class="chart-range-list">
         ${overlays.length === 0 ? `
           <div class="chart-empty-range">
-            <strong>No active LP overlay</strong>
-            <small>Price candles are live. Range bands appear automatically when a tracked wallet owns or stakes a readable LFI/USDC Slipstream NFT.</small>
+            <strong>${escapeHtml(options.emptyTitle ?? 'No active LP overlay')}</strong>
+            <small>${escapeHtml(options.emptyDescription ?? 'Price candles are live. Range bands appear automatically when a tracked wallet owns or stakes a readable LFI/USDC Slipstream NFT.')}</small>
           </div>
         ` : overlays.map((overlay) => `
           <div class="chart-range-row">
@@ -101,15 +115,15 @@ function renderLegend(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[], s
   `;
 }
 
-function renderFallback(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[], error: unknown): string {
+function renderFallback(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[], error: unknown, options: LpRangeChartOptions = {}): string {
   return `
-    <div class="chart-fallback">
+    <div class="chart-fallback${options.compact ? ' compact-chart-layout' : ''}">
       <div>
         <p class="eyebrow">Chart source unavailable</p>
         <h3>Live LP ranges are still online</h3>
         <p>${error instanceof Error ? escapeHtml(error.message) : escapeHtml(String(error))}</p>
       </div>
-      ${renderLegend(snapshot, overlays, 'On-chain range state only')}
+      ${renderLegend(snapshot, overlays, 'On-chain range state only', options)}
     </div>
   `;
 }
@@ -137,45 +151,54 @@ function drawRangeBands(
   }).join('');
 }
 
-function resetChart(): void {
-  activeResizeObserver?.disconnect();
-  activeResizeObserver = undefined;
-  activeChart?.remove();
-  activeChart = undefined;
+function mountState(mount: HTMLElement): ChartMountState {
+  const state = chartStates.get(mount) ?? { renderToken: 0 };
+  chartStates.set(mount, state);
+  return state;
 }
 
-function renderChartFrame(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[], candles: GeckoCandle[]): string {
+function resetChart(mount: HTMLElement): ChartMountState {
+  const state = mountState(mount);
+  state.resizeObserver?.disconnect();
+  state.resizeObserver = undefined;
+  state.chart?.remove();
+  state.chart = undefined;
+  return state;
+}
+
+function renderChartFrame(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[], candles: GeckoCandle[], options: LpRangeChartOptions = {}): string {
   const first = new Date(candles[0].time * 1000).toLocaleString();
   const last = new Date(candles[candles.length - 1].time * 1000).toLocaleString();
   return `
-    <div class="chart-layout">
+    <div class="chart-layout${options.compact ? ' compact-chart-layout' : ''}">
       <div class="chart-viewport">
         <div class="chart-canvas" role="img" aria-label="LFI price candles with LP range bands"></div>
         <div class="chart-overlay" aria-hidden="true"></div>
       </div>
-      ${renderLegend(snapshot, overlays, `${candles.length} 15m candles from GeckoTerminal, ${first} to ${last}`)}
+      ${renderLegend(snapshot, overlays, `${candles.length} 15m candles from GeckoTerminal, ${first} to ${last}`, options)}
     </div>
   `;
 }
 
-export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTMLElement): Promise<void> {
-  resetChart();
-  mount.classList.remove('compact-chart');
-  const overlays = buildRangeOverlays(snapshot);
-  const renderToken = ++activeRenderToken;
-  mount.innerHTML = renderLoading(snapshot, overlays);
+export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTMLElement, options: LpRangeChartOptions = {}): Promise<void> {
+  const state = resetChart(mount);
+  mount.classList.toggle('compact-chart', Boolean(options.compact));
+  const overlays = buildRangeOverlays({ pool: snapshot.pool, positions: options.positions ?? snapshot.positions });
+  const renderToken = ++nextRenderToken;
+  state.renderToken = renderToken;
+  mount.innerHTML = renderLoading(snapshot, overlays, options.compact);
 
   try {
     const candles = await fetchGeckoPoolOhlcv();
-    if (renderToken !== activeRenderToken || !mount.isConnected) return;
+    if (renderToken !== state.renderToken || !mount.isConnected) return;
 
-    mount.innerHTML = renderChartFrame(snapshot, overlays, candles);
+    mount.innerHTML = renderChartFrame(snapshot, overlays, candles, options);
     const chartNode = mount.querySelector<HTMLDivElement>('.chart-canvas');
     const overlayNode = mount.querySelector<HTMLDivElement>('.chart-overlay');
     if (!chartNode || !overlayNode) return;
 
     const width = Math.max(320, chartNode.clientWidth);
-    const height = chartHeight(chartNode);
+    const height = chartHeight(chartNode, options.compact);
     const chart = createChart(chartNode, {
       width,
       height,
@@ -210,7 +233,7 @@ export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTM
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     });
-    activeChart = chart;
+    state.chart = chart;
 
     const candleSeries = chart.addCandlestickSeries({
       upColor: '#16c784',
@@ -262,18 +285,18 @@ export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTM
     }
 
     chart.timeScale().fitContent();
-    const repaintBands = () => window.requestAnimationFrame(() => drawRangeBands(overlayNode, candleSeries, overlays, chartHeight(chartNode)));
+    const repaintBands = () => window.requestAnimationFrame(() => drawRangeBands(overlayNode, candleSeries, overlays, chartHeight(chartNode, options.compact)));
     repaintBands();
 
-    activeResizeObserver = new ResizeObserver(([entry]) => {
+    state.resizeObserver = new ResizeObserver(([entry]) => {
       const nextWidth = Math.max(320, Math.floor(entry.contentRect.width));
-      chart.resize(nextWidth, chartHeight(chartNode));
+      chart.resize(nextWidth, chartHeight(chartNode, options.compact));
       repaintBands();
     });
-    activeResizeObserver.observe(chartNode);
+    state.resizeObserver.observe(chartNode);
   } catch (error) {
-    if (renderToken === activeRenderToken && mount.isConnected) {
-      mount.innerHTML = renderFallback(snapshot, overlays, error);
+    if (renderToken === state.renderToken && mount.isConnected) {
+      mount.innerHTML = renderFallback(snapshot, overlays, error, options);
     }
   }
 }

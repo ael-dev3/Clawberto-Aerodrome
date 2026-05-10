@@ -22,8 +22,12 @@ export interface SuggestedLpRange {
   lowerTick: number;
   upperTick: number;
   halfWidthPct: number;
+  totalWidthPct: number;
   realizedVolatilityPct: number;
   observedMovePct: number;
+  emissionAprPct?: number;
+  emissionTighteningPct: number;
+  volatilityWidthPct: number;
 }
 
 function latestClose(candles: GeckoCandle[]): GeckoCandle | undefined {
@@ -85,11 +89,20 @@ export function suggestedLpRangeFromCandles(input: {
   tickSpacing: number;
   token0Decimals: number;
   token1Decimals: number;
+  emissionAprPct?: number;
 }): SuggestedLpRange {
   const currentPrice = tickToAdjustedPrice(input.currentTick, input.token0Decimals, input.token1Decimals);
   const volatility = realizedVolatilityPct(input.candles, 24);
   const observedMove = observedMovePct(input.candles, currentPrice, 48);
-  const halfWidthPct = Math.min(85, Math.max(12, volatility * 2, observedMove * 1.1));
+  const volatilityWidthPct = Math.max(12, volatility * 2, observedMove * 1.1);
+  const emissionApr = input.emissionAprPct !== undefined && Number.isFinite(input.emissionAprPct)
+    ? Math.max(0, input.emissionAprPct)
+    : undefined;
+  const emissionTighteningPct = emissionApr === undefined
+    ? 0
+    : Math.min(42, Math.log10(1 + emissionApr) * 12);
+  const minimumWidthPct = Math.max(6, volatility * 0.75);
+  const halfWidthPct = Math.min(85, Math.max(minimumWidthPct, volatilityWidthPct * (1 - emissionTighteningPct / 100)));
   const lowerPrice = currentPrice * Math.max(0.01, 1 - halfWidthPct / 100);
   const upperPrice = currentPrice * (1 + halfWidthPct / 100);
   const lowerTick = alignTickDown(priceToAdjustedTick(lowerPrice, input.token0Decimals, input.token1Decimals), input.tickSpacing);
@@ -101,7 +114,11 @@ export function suggestedLpRangeFromCandles(input: {
     lowerPrice: tickToAdjustedPrice(lowerTick, input.token0Decimals, input.token1Decimals),
     upperPrice: tickToAdjustedPrice(upperTick, input.token0Decimals, input.token1Decimals),
     halfWidthPct,
+    totalWidthPct: halfWidthPct * 2,
     realizedVolatilityPct: volatility,
     observedMovePct: observedMove,
+    emissionAprPct: emissionApr,
+    emissionTighteningPct,
+    volatilityWidthPct,
   };
 }

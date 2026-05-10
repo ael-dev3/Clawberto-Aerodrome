@@ -15,7 +15,10 @@ import {
   tickToAdjustedPrice,
   usdBreakdown,
 } from '../src/aero-math';
+import { CONTRACTS } from '../src/config';
 import { DASHBOARD_SECTION_ORDER } from '../src/dashboard-layout';
+import { positionValuation } from '../src/position-valuation';
+import type { DashboardSnapshot, LivePosition } from '../src/rpc';
 
 describe('Aerodrome CL math', () => {
   it('aligns a 50 percent price band to CL200 ticks', () => {
@@ -82,6 +85,41 @@ describe('Aerodrome CL math', () => {
       positionUsd: 1_000,
     });
     expect(apr).toBeCloseTo(39.42, 2);
+  });
+
+  it('does not assign emissions APR to unstaked wallet-held LP NFTs', () => {
+    const snapshot = {
+      pool: {
+        currentTick: 0,
+        rewardRate: 1_000_000_000_000_000_000n,
+        stakedLiquidity: 1_000_000_000_000_000_000n,
+      },
+      market: {
+        aeroUsd: 0.5,
+        lfiUsd: 1,
+      },
+    } as unknown as DashboardSnapshot;
+    const basePosition = {
+      tokenId: 1n,
+      label: 'Test LP',
+      origin: 'hermes-managed',
+      pair: 'LFI/USDC',
+      pool: CONTRACTS.pool,
+      gauge: CONTRACTS.gauge,
+      nftManager: CONTRACTS.nftManager,
+      enteredAt: 'test',
+      intendedRange: 'test',
+      notes: 'test',
+      token0: CONTRACTS.lfi,
+      token1: CONTRACTS.usdc,
+      tickLower: -100,
+      tickUpper: 100,
+      liquidity: 1_000_000_000_000_000_000n,
+      setupTxs: [],
+    } as LivePosition;
+
+    expect(positionValuation({ ...basePosition, staked: false }, snapshot).aprPct).toBeUndefined();
+    expect(positionValuation({ ...basePosition, staked: true }, snapshot).aprPct).toBeGreaterThan(0);
   });
 
   it('estimates fee APR, IL, and profitability index without cost-basis assumptions', () => {

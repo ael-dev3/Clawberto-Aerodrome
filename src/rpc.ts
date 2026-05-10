@@ -1,4 +1,4 @@
-import { createPublicClient, fallback, http, type Address } from 'viem';
+import { createPublicClient, fallback, http, parseAbiItem, type Address } from 'viem';
 import { base } from 'viem/chains';
 
 import { erc20Abi, gaugeAbi, nftManagerAbi, poolAbi } from './aero-abis';
@@ -8,7 +8,14 @@ import { managedPositions, type ManagedPositionRecord } from './positions';
 const AERO_DEXSCREENER_URL = `https://api.dexscreener.com/latest/dex/tokens/${CONTRACTS.aero}`;
 const DEXSCREENER_PAIR_URL = 'https://api.dexscreener.com/latest/dex/pairs/base';
 const MARKET_TIMEOUT_MS = 5_000;
-const DISCOVERY_MAX_OWNER_NFTS = 120;
+const DISCOVERY_MAX_WALLET_NFTS = 120;
+const DISCOVERY_MAX_GAUGE_NFTS = 48;
+const DISCOVERY_RECENT_BLOCKS = 9_500n;
+const DISCOVERY_LOG_CHUNK_BLOCKS = 9_500n;
+const DISCOVERY_LOG_TIMEOUT_MS = 5_000;
+const DISCOVERY_ENUM_TIMEOUT_MS = 4_000;
+const gaugeDepositEvent = parseAbiItem('event Deposit(address indexed user, uint256 indexed tokenId, uint128 indexed liquidityToStake)');
+const gaugeWithdrawEvent = parseAbiItem('event Withdraw(address indexed user, uint256 indexed tokenId, uint128 indexed liquidityToStake)');
 
 export const client = createPublicClient({
   chain: base,
@@ -121,6 +128,7 @@ export interface PositionDiscoverySnapshot {
   staticRecords: number;
   walletNftsScanned: number;
   gaugeNftsScanned: number;
+  gaugeLogsScanned: number;
   discoveredRecords: number;
   error?: string;
 }
@@ -190,17 +198,20 @@ function isLfiUsdcPosition(position: LivePosition): boolean {
   );
 }
 
-async function loadOwnerSlipstreamTokenIds(owner: Address, maxItems = DISCOVERY_MAX_OWNER_NFTS): Promise<bigint[]> {
+async function loadOwnerSlipstreamTokenIds(owner: Address, maxItems = DISCOVERY_MAX_WALLET_NFTS, scan: 'head' | 'tail' = 'head'): Promise<bigint[]> {
   const balance = await client.readContract({
     address: CONTRACTS.nftManager,
     abi: nftManagerAbi,
     functionName: 'balanceOf',
     args: [owner],
   });
-  const count = Math.min(Number(balance), maxItems);
+  const balanceCount = balance > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(balance);
+  const count = Math.min(balanceCount, maxItems);
   if (!Number.isFinite(count) || count <= 0) return [];
+  const start = scan === 'tail' && balanceCount > count ? balanceCount - count : 0;
+  const indexes = Array.from({ length: count }, (_, index) => start + index);
 
-  return await Promise.all(Array.from({ length: count }, (_, index) => client.readContract({
+  return await Promise.all(indexes.map((index) => client.readContract({
     address: CONTRACTS.nftManager,
     abi: nftManagerAbi,
     functionName: 'tokenOfOwnerByIndex',
@@ -213,22 +224,132 @@ function pushRecord(records: Map<string, ManagedPositionRecord>, record: Managed
   if (!records.has(key)) records.set(key, record);
 }
 
+function appendDiscoveryError(discovery: PositionDiscoverySnapshot, message: string): void {
+  discovery.error = discovery.error ? `${discovery.error}; ${message}` : message;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = globalThis.setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) globalThis.clearTimeout(timeout);
+  }
+}
+
+function isNewerLog(
+  candidate: { blockNumber: bigint; logIndex: number },
+  current: { blockNumber: bigint; logIndex: number },
+): boolean {
+  return candidate.blockNumber > current.blockNumber ||
+    (candidate.blockNumber === current.blockNumber && candidate.logIndex > current.logIndex);
+}
+
+interface GaugeStakeLog {
+  args: { tokenId?: bigint };
+  blockNumber: bigint;
+  logIndex: number;
+}
+
+async function getGaugeLogsChunked(
+  event: typeof gaugeDepositEvent | typeof gaugeWithdrawEvent,
+  wallet: Address,
+  fromBlock: bigint,
+  toBlock: bigint,
+): Promise<GaugeStakeLog[]> {
+  const logs: GaugeStakeLog[] = [];
+  for (let start = fromBlock; start <= toBlock; start += DISCOVERY_LOG_CHUNK_BLOCKS + 1n) {
+    const end = start + DISCOVERY_LOG_CHUNK_BLOCKS > toBlock ? toBlock : start + DISCOVERY_LOG_CHUNK_BLOCKS;
+    const chunk = await client.getLogs({
+      address: CONTRACTS.gauge,
+      event,
+      args: { user: wallet },
+      fromBlock: start,
+      toBlock: end,
+    });
+    logs.push(...chunk);
+  }
+  return logs;
+}
+
+async function discoverGaugeLogRecords(): Promise<{ records: ManagedPositionRecord[]; logsScanned: number }> {
+  const latestBlock = await client.getBlockNumber();
+  const fromBlock = latestBlock > DISCOVERY_RECENT_BLOCKS ? latestBlock - DISCOVERY_RECENT_BLOCKS : 0n;
+  const records: ManagedPositionRecord[] = [];
+  let logsScanned = 0;
+
+  await Promise.all(TRACKED_WALLETS.map(async (wallet) => {
+    const [deposits, withdrawals] = await Promise.all([
+      getGaugeLogsChunked(gaugeDepositEvent, wallet.address, fromBlock, latestBlock),
+      getGaugeLogsChunked(gaugeWithdrawEvent, wallet.address, fromBlock, latestBlock),
+    ]);
+    logsScanned += deposits.length + withdrawals.length;
+    const latestByToken = new Map<string, {
+      tokenId: bigint;
+      kind: 'deposit' | 'withdraw';
+      blockNumber: bigint;
+      logIndex: number;
+    }>();
+    for (const log of deposits) {
+      const tokenId = log.args.tokenId;
+      if (tokenId === undefined) continue;
+      const key = tokenId.toString();
+      const next = { tokenId, kind: 'deposit' as const, blockNumber: log.blockNumber, logIndex: log.logIndex };
+      const current = latestByToken.get(key);
+      if (!current || isNewerLog(next, current)) latestByToken.set(key, next);
+    }
+    for (const log of withdrawals) {
+      const tokenId = log.args.tokenId;
+      if (tokenId === undefined) continue;
+      const key = tokenId.toString();
+      const next = { tokenId, kind: 'withdraw' as const, blockNumber: log.blockNumber, logIndex: log.logIndex };
+      const current = latestByToken.get(key);
+      if (!current || isNewerLog(next, current)) latestByToken.set(key, next);
+    }
+    for (const event of latestByToken.values()) {
+      if (event.kind !== 'deposit') continue;
+      records.push({
+        tokenId: event.tokenId,
+        label: `${wallet.shortLabel} staked NFT`,
+        origin: wallet.role === 'agent' ? 'hermes-managed' : 'ael-existing',
+        pair: 'LFI/USDC',
+        pool: CONTRACTS.pool,
+        gauge: CONTRACTS.gauge,
+        nftManager: CONTRACTS.nftManager,
+        depositor: wallet.address,
+        enteredAt: 'Discovered live',
+        intendedRange: 'Current gauge-staked Slipstream NFT',
+        notes: 'Discovered from recent gauge Deposit/Withdraw logs for the tracked depositor and verified with stakedContains.',
+        setupTxs: [],
+      });
+    }
+  }));
+
+  return { records, logsScanned };
+}
+
 async function discoverPositionRecords(): Promise<{ records: ManagedPositionRecord[]; discovery: PositionDiscoverySnapshot }> {
   const records = new Map<string, ManagedPositionRecord>();
   for (const record of managedPositions) pushRecord(records, record);
 
   const discovery: PositionDiscoverySnapshot = {
-    source: 'Base RPC ERC-721 enumerable ownership + gauge depositor verification',
+    source: 'Base RPC depositor logs + ERC-721 enumerable custody verification',
     staticRecords: managedPositions.length,
     walletNftsScanned: 0,
     gaugeNftsScanned: 0,
+    gaugeLogsScanned: 0,
     discoveredRecords: 0,
   };
 
   try {
     const walletTokenGroups = await Promise.all(TRACKED_WALLETS.map(async (wallet) => ({
       wallet,
-      tokenIds: await loadOwnerSlipstreamTokenIds(wallet.address),
+      tokenIds: await loadOwnerSlipstreamTokenIds(wallet.address, DISCOVERY_MAX_WALLET_NFTS, 'head'),
     })));
     for (const { wallet, tokenIds } of walletTokenGroups) {
       discovery.walletNftsScanned += tokenIds.length;
@@ -250,10 +371,22 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
       }
     }
 
-    const gaugeTokenIds = await loadOwnerSlipstreamTokenIds(CONTRACTS.gauge);
-    discovery.gaugeNftsScanned = gaugeTokenIds.length;
-    for (const tokenId of gaugeTokenIds) {
-      await Promise.all(TRACKED_WALLETS.map(async (wallet) => {
+    try {
+      const gaugeLogRecords = await withTimeout(discoverGaugeLogRecords(), DISCOVERY_LOG_TIMEOUT_MS, 'Gauge depositor log discovery');
+      discovery.gaugeLogsScanned = gaugeLogRecords.logsScanned;
+      for (const record of gaugeLogRecords.records) pushRecord(records, record);
+    } catch (error) {
+      appendDiscoveryError(discovery, error instanceof Error ? error.message : String(error));
+    }
+
+    try {
+      const gaugeTokenIds = await withTimeout(
+        loadOwnerSlipstreamTokenIds(CONTRACTS.gauge, DISCOVERY_MAX_GAUGE_NFTS, 'tail'),
+        DISCOVERY_ENUM_TIMEOUT_MS,
+        'Gauge NFT custody sampling',
+      );
+      discovery.gaugeNftsScanned = gaugeTokenIds.length;
+      await withTimeout(Promise.all(gaugeTokenIds.flatMap((tokenId) => TRACKED_WALLETS.map(async (wallet) => {
         const staked = await client.readContract({
           address: CONTRACTS.gauge,
           abi: gaugeAbi,
@@ -272,13 +405,15 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
           depositor: wallet.address,
           enteredAt: 'Discovered live',
           intendedRange: 'Current gauge-staked Slipstream NFT',
-          notes: 'Discovered from gauge ERC-721 enumerable custody and confirmed with stakedContains(depositor, tokenId).',
+          notes: 'Discovered from recent gauge ERC-721 custody and confirmed with stakedContains(depositor, tokenId).',
           setupTxs: [],
         });
-      }));
+      }))), DISCOVERY_ENUM_TIMEOUT_MS, 'Gauge depositor membership sampling');
+    } catch (error) {
+      appendDiscoveryError(discovery, error instanceof Error ? error.message : String(error));
     }
   } catch (error) {
-    discovery.error = error instanceof Error ? error.message : String(error);
+    appendDiscoveryError(discovery, error instanceof Error ? error.message : String(error));
   }
 
   discovery.discoveredRecords = Math.max(0, records.size - managedPositions.length);

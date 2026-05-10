@@ -70,6 +70,9 @@ button { font: inherit; }
 .analytics-kv span,
 .analytics-score-grid span,
 .wallet-table span,
+.wallet-kpi-grid span,
+.uptime-head span,
+.uptime-legend,
 .chart-metric span,
 .chart-range-row small,
 .chart-source {
@@ -166,12 +169,140 @@ button {
 .status.in-range { color: var(--green); border-color: rgba(53, 201, 139, 0.45); background: rgba(53, 201, 139, 0.08); }
 .status.below-range,
 .status.above-range { color: var(--amber); border-color: rgba(230, 179, 74, 0.45); background: rgba(230, 179, 74, 0.08); }
+.status.no-active-lp { color: var(--subtle); border-color: var(--line); background: var(--surface-2); }
 
 .range-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
   gap: 8px;
   align-items: start;
+}
+
+.wallet-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.wallet-lp-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0b0f15;
+  overflow: hidden;
+}
+
+.wallet-lp-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wallet-lp-header a {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.wallet-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.wallet-kpi-grid > div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 9px;
+}
+
+.uptime-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: #0b0f15;
+}
+
+.uptime-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.uptime-head strong {
+  font-size: 16px;
+}
+
+.uptime-bar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.uptime-bar i {
+  min-width: 0;
+  transition: width 180ms ease;
+}
+
+.uptime-in { background: var(--green); }
+.uptime-out { background: var(--amber); }
+.uptime-none { background: var(--surface-3); }
+
+.uptime-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  text-transform: none;
+}
+
+.uptime-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.uptime-legend b {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.uptime-card small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.wallet-kpi-grid strong {
+  display: block;
+  margin: 6px 0 3px;
+  font-size: 17px;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-kpi-grid small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .tracked-wallet-strip {
@@ -386,7 +517,7 @@ button {
 .timeline-row a { color: var(--accent); font-size: 12px; font-weight: 750; text-decoration: none; }
 
 .lp-price-chart { min-height: 300px; }
-.lp-price-chart.compact-chart { min-height: 160px; }
+.lp-price-chart.compact-chart { min-height: 220px; }
 .chart-state {
   width: 100%;
   min-height: 300px;
@@ -431,6 +562,33 @@ button {
   z-index: 1;
   width: 100%;
   height: 300px;
+}
+.compact-chart .chart-canvas { height: 220px; }
+.compact-chart .chart-state,
+.compact-chart .chart-viewport,
+.compact-chart .chart-fallback { min-height: 220px; }
+.compact-chart-layout {
+  grid-template-columns: minmax(0, 1fr) 200px;
+}
+.compact-chart-side {
+  gap: 6px;
+  padding: 8px;
+}
+.compact-chart-side .chart-metric,
+.compact-chart-side .chart-range-row,
+.compact-chart-side .chart-empty-range {
+  padding: 8px;
+}
+.compact-chart-side .chart-metric strong {
+  margin-top: 5px;
+  font-size: 16px;
+}
+.compact-chart-side .chart-range-row {
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 8px;
+}
+.compact-chart-side .chart-empty-range small {
+  font-size: 11px;
 }
 .chart-overlay {
   position: absolute;
@@ -673,6 +831,7 @@ button {
 
 @media (max-width: 1120px) {
   .range-layout,
+  .wallet-compare-grid,
   .tracked-wallet-strip,
   .position-grid,
   .analytics-grid { grid-template-columns: 1fr; }
@@ -699,6 +858,7 @@ button {
   .topbar,
   .console-head,
   .tracked-wallet-card header,
+  .wallet-lp-header,
   .wallet-panel,
   .section-heading,
   .position-card header,
@@ -722,6 +882,7 @@ button {
     flex-direction: column;
   }
   .range-sidecar,
+  .wallet-kpi-grid,
   .sidecar-row.triple,
   .metric-strip,
   .position-main,
@@ -747,6 +908,12 @@ button {
   .chart-canvas,
   .chart-fallback { min-height: 320px; }
   .chart-canvas { height: 320px; }
+  .compact-chart,
+  .compact-chart .chart-state,
+  .compact-chart .chart-viewport,
+  .compact-chart .chart-canvas,
+  .compact-chart .chart-fallback { min-height: 260px; }
+  .compact-chart .chart-canvas { height: 260px; }
   .chart-range-band span { left: 8px; max-width: calc(100% - 16px); font-size: 10px; }
   .timeline-row { grid-template-columns: 1fr; }
 }

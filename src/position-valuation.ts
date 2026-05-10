@@ -75,7 +75,7 @@ export function positionValuation(position: LivePosition, snapshot: DashboardSna
     token1Decimals,
   });
   const usd = usdBreakdown(amounts, tokenUsd(position.token0, snapshot), tokenUsd(position.token1, snapshot));
-  const aprPct = snapshot.market.aeroUsd
+  const aprPct = snapshot.market.aeroUsd && position.staked
     ? emissionAprPct({
       rewardRateRaw: snapshot.pool.rewardRate,
       rewardTokenDecimals: 18,
@@ -85,7 +85,7 @@ export function positionValuation(position: LivePosition, snapshot: DashboardSna
       positionUsd: usd.totalUsd,
     })
     : undefined;
-  const pendingAeroUsd = snapshot.market.aeroUsd && position.earnedAero !== undefined
+  const pendingAeroUsd = snapshot.market.aeroUsd && position.staked && position.earnedAero !== undefined
     ? rawToDecimal(position.earnedAero, 18) * snapshot.market.aeroUsd
     : undefined;
   const feesUsd = owedUsd(position, snapshot);

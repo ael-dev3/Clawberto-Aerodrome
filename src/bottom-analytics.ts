@@ -1,6 +1,5 @@
 import {
   estimatedFeeAprPct,
-  formatTokenAmount,
   formatUsd,
   percentFormat,
   profitabilityIndex,
@@ -70,6 +69,12 @@ function signedPct(value: number | undefined, digits = 2): string {
   if (value === undefined || !Number.isFinite(value)) return 'n/a';
   const sign = value > 0 ? '+' : '';
   return `${sign}${value.toFixed(digits)}%`;
+}
+
+function scoreFormat(value: number): string {
+  if (!Number.isFinite(value)) return 'n/a';
+  if (Math.abs(value) >= 1_000) return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+  return numberFormat(value, 1);
 }
 
 function pctClass(value: number | undefined): string {
@@ -208,6 +213,18 @@ function summarizeCompetitor(snapshot: DashboardSnapshot, wallet: TrackedWalletS
   };
 }
 
+function currentEmissionAprPct(snapshot: DashboardSnapshot): number | undefined {
+  const active = snapshot.positions.filter((position) => !position.liveError && position.liquidity !== undefined && position.liquidity > 0n);
+  const activeEmissionApr = weightedAverage(active.map((position) => {
+    const valuation = positionValuation(position, snapshot);
+    return { value: valuation.aprPct, weight: valuation.usd?.totalUsd };
+  }));
+  if (activeEmissionApr !== undefined) return activeEmissionApr;
+  if (!snapshot.market.aeroUsd || !snapshot.market.managedPair?.liquidityUsd || snapshot.market.managedPair.liquidityUsd <= 0) return undefined;
+  const annualEmissionUsd = rawToDecimal(snapshot.pool.rewardRate, 18) * 31_536_000 * snapshot.market.aeroUsd;
+  return (annualEmissionUsd / snapshot.market.managedPair.liquidityUsd) * 100;
+}
+
 function fallbackWindowChange(pair: PairMarketSnapshot | undefined, hours: number): number | undefined {
   const key = hours === 1 ? 'h1' : hours === 6 ? 'h6' : hours === 24 ? 'h24' : undefined;
   return key ? pair?.priceChange?.[key] : undefined;
@@ -257,27 +274,32 @@ function renderPoolComposition(snapshot: DashboardSnapshot): string {
 
 function renderRangeSuggestion(snapshot: DashboardSnapshot, candles: GeckoCandle[]): string {
   const primary = snapshot.positions.find((position) => !position.liveError && position.tickSpacing !== undefined);
+  const emissionAprPct = currentEmissionAprPct(snapshot);
   const suggestion = suggestedLpRangeFromCandles({
     candles,
     currentTick: snapshot.pool.currentTick,
     tickSpacing: primary?.tickSpacing ?? 200,
     token0Decimals: 18,
     token1Decimals: 6,
+    emissionAprPct,
   });
   return `
     <section class="analytics-card">
       <header>
-        <span>Suggested LP range</span>
-        <strong>${formatUsd(suggestion.lowerPrice, 8)} - ${formatUsd(suggestion.upperPrice, 8)}</strong>
+        <span>Optimal LP width</span>
+        <strong>${percentFormat(suggestion.totalWidthPct, 1)}</strong>
       </header>
       <div class="analytics-two-col">
-        <div><span>Lower tick</span><strong>${tickLabel(suggestion.lowerTick)}</strong><small>${formatUsd(suggestion.lowerPrice, 8)}</small></div>
-        <div><span>Upper tick</span><strong>${tickLabel(suggestion.upperTick)}</strong><small>${formatUsd(suggestion.upperPrice, 8)}</small></div>
+        <div><span>Lower</span><strong>${tickLabel(suggestion.lowerTick)}</strong><small>${formatUsd(suggestion.lowerPrice, 8)}</small></div>
+        <div><span>Upper</span><strong>${tickLabel(suggestion.upperTick)}</strong><small>${formatUsd(suggestion.upperPrice, 8)}</small></div>
       </div>
       <div class="analytics-kv">
+        <span>Recommended band <b>${formatUsd(suggestion.lowerPrice, 8)} - ${formatUsd(suggestion.upperPrice, 8)}</b></span>
+        <span>Width each side <b>${percentFormat(suggestion.halfWidthPct, 1)}</b></span>
         <span>24h realized volatility <b>${percentFormat(suggestion.realizedVolatilityPct, 2)}</b></span>
         <span>48h observed move <b>${percentFormat(suggestion.observedMovePct, 2)}</b></span>
-        <span>Half-width <b>${percentFormat(suggestion.halfWidthPct, 1)}</b></span>
+        <span>Emission APR input <b>${suggestion.emissionAprPct === undefined ? 'n/a' : percentFormat(suggestion.emissionAprPct, 2)}</b></span>
+        <span>Emission width adjustment <b>-${percentFormat(suggestion.emissionTighteningPct, 1)}</b></span>
       </div>
     </section>
   `;
@@ -288,33 +310,6 @@ function winnerLabel(agent: CompetitorSummary, human: CompetitorSummary): string
   return agent.index > human.index ? 'AI agent leading' : 'Manual human leading';
 }
 
-function renderCompetitorCard(summary: CompetitorSummary): string {
-  const rangeText = summary.lowerHeadroomPct === undefined || summary.upperHeadroomPct === undefined
-    ? 'n/a'
-    : `${percentFormat(summary.lowerHeadroomPct, 1)} lower / ${percentFormat(summary.upperHeadroomPct, 1)} upper`;
-  const sideText = summary.lfiSidePct === undefined || summary.usdcSidePct === undefined
-    ? 'n/a'
-    : `${percentFormat(summary.lfiSidePct, 1)} LFI / ${percentFormat(summary.usdcSidePct, 1)} USDC`;
-  return `
-    <div class="competitor-card">
-      <header>
-        <span>${summary.wallet.shortLabel}</span>
-        <strong>${numberFormat(summary.index, 1)}</strong>
-      </header>
-      <div class="analytics-kv">
-        <span>LP position size <b>${formatUsd(summary.valueUsd)}</b></span>
-        <span>Wallet value <b>${formatUsd(summary.walletUsd)}</b></span>
-        <span>Total tracked value <b>${formatUsd(summary.totalUsd)}</b></span>
-        <span>Current APR <b>${summary.aprPct === undefined ? 'n/a' : percentFormat(summary.aprPct, 2)}</b></span>
-        <span>Pending emissions <b>${numberFormat(summary.pendingAero, 6)} AERO / ${formatUsd(summary.pendingAeroUsd)}</b></span>
-        <span>LP balance split <b>${sideText}</b></span>
-        <span>Range headroom <b>${rangeText}</b></span>
-        <span>Confirmed LP NFTs <b>${summary.lpCount}</b></span>
-      </div>
-    </div>
-  `;
-}
-
 function renderProfitability(agent: CompetitorSummary, human: CompetitorSummary): string {
   const relative = agent.index > 0 ? (human.index / agent.index) * 100 : human.index > 0 ? Infinity : 0;
   return `
@@ -323,14 +318,20 @@ function renderProfitability(agent: CompetitorSummary, human: CompetitorSummary)
         <span>Manual human vs AI agent</span>
         <strong>${winnerLabel(agent, human)}</strong>
       </header>
-      <div class="competitor-grid">
-        ${renderCompetitorCard(agent)}
-        ${renderCompetitorCard(human)}
-      </div>
       <div class="analytics-score-grid compact">
         <div>
+          <span>AI index</span>
+          <strong>${scoreFormat(agent.index)}</strong>
+          <small>${formatUsd(agent.valueUsd)} LP / ${agent.aprPct === undefined ? 'n/a' : percentFormat(agent.aprPct, 2)} APR</small>
+        </div>
+        <div>
+          <span>Human index</span>
+          <strong>${scoreFormat(human.index)}</strong>
+          <small>${formatUsd(human.valueUsd)} LP / ${human.aprPct === undefined ? 'n/a' : percentFormat(human.aprPct, 2)} APR</small>
+        </div>
+        <div>
           <span>Score spread</span>
-          <strong>${numberFormat(Math.abs(agent.index - human.index), 1)}</strong>
+          <strong>${scoreFormat(Math.abs(agent.index - human.index))}</strong>
           <small>${human.index === 0 && agent.index > 0 ? 'manual wallet has no confirmed active LP' : `human/agent ratio ${Number.isFinite(relative) ? numberFormat(relative, 1) : 'n/a'}`}</small>
         </div>
         <div>
@@ -348,26 +349,6 @@ function renderProfitability(agent: CompetitorSummary, human: CompetitorSummary)
           <strong>${percentFormat(human.lfiExposurePct, 1)}</strong>
           <small>${formatUsd(human.walletUsd)} tracked wallet value</small>
         </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderWalletRows(snapshot: DashboardSnapshot): string {
-  return `
-    <section class="analytics-card analytics-wide">
-      <header>
-        <span>Tracked wallets</span>
-        <strong>${snapshot.trackedWallets.length}</strong>
-      </header>
-      <div class="wallet-table">
-        ${snapshot.trackedWallets.map((wallet) => `
-          <div>
-            <span>${wallet.shortLabel}</span>
-            <strong>${formatUsd(walletUsdValue(snapshot, wallet.balances))}</strong>
-            <small>${formatTokenAmount(wallet.balances.lfi, 18, 2)} LFI / ${formatTokenAmount(wallet.balances.usdc, 6, 2)} USDC / ${formatTokenAmount(wallet.balances.aero, 18, 4)} AERO${wallet.error ? ` / ${wallet.error}` : ''}</small>
-          </div>
-        `).join('')}
       </div>
     </section>
   `;
@@ -404,12 +385,11 @@ function renderContent(snapshot: DashboardSnapshot, managedCandles: GeckoCandle[
       ${renderPoolComposition(snapshot)}
       ${renderRangeSuggestion(snapshot, candlesForLp)}
       ${renderProfitability(agent, human)}
-      ${renderWalletRows(snapshot)}
     </div>
   `;
 }
 
-export async function renderBottomAnalytics(snapshot: DashboardSnapshot, mount: HTMLElement): Promise<void> {
+export async function renderBottomAnalytics(snapshot: DashboardSnapshot, mount: HTMLElement, preloadedManagedCandles: GeckoCandle[] = []): Promise<void> {
   mount.innerHTML = `
     <div class="analytics-loading">
       <div class="loader small"></div>
@@ -418,7 +398,9 @@ export async function renderBottomAnalytics(snapshot: DashboardSnapshot, mount: 
   `;
 
   const [managed, reference] = await Promise.allSettled([
-    fetchGeckoPoolOhlcv({ poolAddress: CONTRACTS.pool, timeframe: 'hour', aggregate: 1, limit: 49 }),
+    preloadedManagedCandles.length > 0
+      ? Promise.resolve(preloadedManagedCandles)
+      : fetchGeckoPoolOhlcv({ poolAddress: CONTRACTS.pool, timeframe: 'hour', aggregate: 1, limit: 49 }),
     fetchGeckoPoolOhlcv({ poolAddress: CONTRACTS.lfiReferencePool, timeframe: 'hour', aggregate: 1, limit: 49 }),
   ]);
   const managedCandles = managed.status === 'fulfilled' ? managed.value : [];

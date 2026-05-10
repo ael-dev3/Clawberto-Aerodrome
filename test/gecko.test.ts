@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { priceWindowChanges, realizedVolatilityPct, suggestedLpRangeFromCandles } from '../src/analytics';
+import { tickToAdjustedPrice } from '../src/aero-math';
 import { normalizeGeckoOhlcv } from '../src/gecko';
 import { buildRangeOverlays } from '../src/lp-range-overlays';
 import type { DashboardSnapshot } from '../src/rpc';
@@ -55,6 +56,38 @@ describe('LFI analytics windows', () => {
     expect(Math.abs(suggestion.lowerTick % 200)).toBe(0);
     expect(Math.abs(suggestion.upperTick % 200)).toBe(0);
     expect(suggestion.lowerPrice).toBeLessThan(suggestion.upperPrice);
+  });
+
+  it('tightens suggested LP width when live emissions APR is high', () => {
+    const currentTick = -365_879;
+    const basePrice = tickToAdjustedPrice(currentTick, 18, 6);
+    const stableCandles = Array.from({ length: 49 }, (_, index) => ({
+      time: 1_700_000_000 + index * 3_600,
+      open: basePrice * (1 + Math.sin(index / 3) * 0.002),
+      high: basePrice * (1.01 + Math.sin(index / 3) * 0.002),
+      low: basePrice * (0.99 + Math.sin(index / 3) * 0.002),
+      close: basePrice * (1 + Math.sin(index / 3) * 0.002),
+      volume: 1_000,
+    }));
+    const baseline = suggestedLpRangeFromCandles({
+      candles: stableCandles,
+      currentTick,
+      tickSpacing: 200,
+      token0Decimals: 18,
+      token1Decimals: 6,
+      emissionAprPct: 0,
+    });
+    const highEmission = suggestedLpRangeFromCandles({
+      candles: stableCandles,
+      currentTick,
+      tickSpacing: 200,
+      token0Decimals: 18,
+      token1Decimals: 6,
+      emissionAprPct: 500,
+    });
+
+    expect(highEmission.totalWidthPct).toBeLessThan(baseline.totalWidthPct);
+    expect(highEmission.emissionTighteningPct).toBeGreaterThan(0);
   });
 });
 
