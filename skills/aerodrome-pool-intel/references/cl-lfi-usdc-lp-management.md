@@ -7,7 +7,10 @@ Live pool requested by Ael:
 - Pool: `0x8343c68279587498526114e6385f0a87f248e0d9`
 - Gauge: `0xe9c73937382c621770f5b7018a407c0749df6aae`
 - Position NFT manager: `0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53`
-- Current managed NFT: `341002`
+- Current Hermes-managed NFT: `341439`
+- Reference/tracked existing NFT: `341002`
+- Live dashboard: `https://ael-dev3.github.io/Clawberto-Aerodrome/`
+- Dashboard source of truth: `src/positions.ts`
 
 This is a Slipstream/CL min-unstake deployment, not a classic volatile/stable Aerodrome pair. Do not use `getPool(token0, token1, bool stable)` for this pool. Use CL tick spacing (`int24`) paths.
 
@@ -63,6 +66,22 @@ NFT `341002` on `0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53`:
 
 - `ownerOf(341002)` -> `0xe9c73937382c621770f5b7018a407c0749df6aae` at read time, meaning the NFT is staked in the gauge.
 - `positions(341002)` -> token0 LFI, token1 USDC, tickSpacing `200`, tickLower `-367400`, tickUpper `-365200`, liquidity `8743302714174061`, tokensOwed0 `0`, tokensOwed1 `0` at read time.
+
+NFT `341439` on `0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53`:
+
+- Mint tx: `0x8adcba0c034c3764c0d785f76872b794d41460142ae8d7744523d61f27c375ac`.
+- Gauge stake tx: `0x68bb02c2c4494f32222e355298c030e90889199eace4aec59577d77abb25d5d0`.
+- Range: tickLower `-373000`, tickUpper `-361800`; staked when `ownerOf(341439) == gauge`.
+- Initial mint amounts: `9731.554156611989780999` LFI and `2.000000` USDC.
+
+## Dashboard update requirement
+
+Every managed LP enter, exit, rebalance, claim, or no-position transition must update the public dashboard before reporting completion:
+
+1. Update `src/positions.ts` with the new active position set and history entry.
+2. Run `npm test && npm run build`.
+3. Commit and push to `main`; GitHub Actions deploys Pages from `dist`.
+4. Verify `https://ael-dev3.github.io/Clawberto-Aerodrome/` loads and renders live Base RPC data without console errors.
 
 ## Critical staking model
 
