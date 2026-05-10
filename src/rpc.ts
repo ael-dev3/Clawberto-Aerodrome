@@ -8,18 +8,24 @@ import { managedPositions, type ManagedPositionRecord } from './positions';
 const AERO_DEXSCREENER_URL = `https://api.dexscreener.com/latest/dex/tokens/${CONTRACTS.aero}`;
 const DEXSCREENER_PAIR_URL = 'https://api.dexscreener.com/latest/dex/pairs/base';
 const MARKET_TIMEOUT_MS = 5_000;
+const RPC_RETRY_ATTEMPTS = 3;
+const RPC_RETRY_BASE_DELAY_MS = 350;
 const DISCOVERY_MAX_WALLET_NFTS = 120;
 const DISCOVERY_MAX_GAUGE_NFTS = 48;
 const DISCOVERY_RECENT_BLOCKS = 9_500n;
 const DISCOVERY_LOG_CHUNK_BLOCKS = 9_500n;
-const DISCOVERY_LOG_TIMEOUT_MS = 5_000;
-const DISCOVERY_ENUM_TIMEOUT_MS = 4_000;
+const DISCOVERY_LOG_TIMEOUT_MS = 8_000;
+const DISCOVERY_ENUM_TIMEOUT_MS = 8_000;
 const gaugeDepositEvent = parseAbiItem('event Deposit(address indexed user, uint256 indexed tokenId, uint128 indexed liquidityToStake)');
 const gaugeWithdrawEvent = parseAbiItem('event Withdraw(address indexed user, uint256 indexed tokenId, uint128 indexed liquidityToStake)');
 
 export const client = createPublicClient({
   chain: base,
-  transport: fallback(RPC_ENDPOINTS.map((url) => http(url, { timeout: 8_000 }))),
+  transport: fallback(RPC_ENDPOINTS.map((url) => http(url, {
+    timeout: 8_000,
+    retryCount: 2,
+    retryDelay: 350,
+  }))),
 });
 
 export interface PoolSnapshot {
@@ -118,6 +124,7 @@ export interface TrackedWalletSnapshot {
   label: string;
   shortLabel: string;
   address: Address;
+  positionAddresses: Address[];
   role: string;
   balances: WalletBalances;
   error?: string;
@@ -133,14 +140,34 @@ export interface PositionDiscoverySnapshot {
   error?: string;
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+}
+
+async function retryRpc<T>(label: string, read: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < RPC_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      lastError = error;
+      if (attempt < RPC_RETRY_ATTEMPTS - 1) {
+        await delay(RPC_RETRY_BASE_DELAY_MS * (attempt + 1));
+      }
+    }
+  }
+  if (lastError instanceof Error) throw new Error(`${label} failed after ${RPC_RETRY_ATTEMPTS} attempts: ${lastError.message}`);
+  throw new Error(`${label} failed after ${RPC_RETRY_ATTEMPTS} attempts: ${String(lastError)}`);
+}
+
 export async function loadPoolSnapshot(): Promise<PoolSnapshot> {
   const [slot0, liquidity, stakedLiquidity, fee, rewardRate, rewardsLeft] = await Promise.all([
-    client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'slot0' }),
-    client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'liquidity' }),
-    client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'stakedLiquidity' }),
-    client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'fee' }),
-    client.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'rewardRate' }),
-    client.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'left' }),
+    retryRpc('pool slot0', () => client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'slot0' })),
+    retryRpc('pool liquidity', () => client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'liquidity' })),
+    retryRpc('pool stakedLiquidity', () => client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'stakedLiquidity' })),
+    retryRpc('pool fee', () => client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'fee' })),
+    retryRpc('gauge rewardRate', () => client.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'rewardRate' })),
+    retryRpc('gauge rewardsLeft', () => client.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'left' })),
   ]);
 
   return {
@@ -156,12 +183,23 @@ export async function loadPoolSnapshot(): Promise<PoolSnapshot> {
 
 export async function loadWalletBalances(address: Address = WALLET_ADDRESS): Promise<WalletBalances> {
   const [eth, lfi, usdc, aero] = await Promise.all([
-    client.getBalance({ address }),
-    client.readContract({ address: CONTRACTS.lfi, abi: erc20Abi, functionName: 'balanceOf', args: [address] }),
-    client.readContract({ address: CONTRACTS.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [address] }),
-    client.readContract({ address: CONTRACTS.aero, abi: erc20Abi, functionName: 'balanceOf', args: [address] }),
+    retryRpc('wallet ETH balance', () => client.getBalance({ address })),
+    retryRpc('wallet LFI balance', () => client.readContract({ address: CONTRACTS.lfi, abi: erc20Abi, functionName: 'balanceOf', args: [address] })),
+    retryRpc('wallet USDC balance', () => client.readContract({ address: CONTRACTS.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [address] })),
+    retryRpc('wallet AERO balance', () => client.readContract({ address: CONTRACTS.aero, abi: erc20Abi, functionName: 'balanceOf', args: [address] })),
   ]);
   return { eth, lfi, usdc, aero };
+}
+
+export function trackedPositionAddresses(wallet: { address: Address; positionAddresses?: readonly Address[] }): Address[] {
+  const addresses = [wallet.address, ...(wallet.positionAddresses ?? [])];
+  const seen = new Set<string>();
+  return addresses.filter((address) => {
+    const key = address.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export async function loadTrackedWallet(wallet: (typeof TRACKED_WALLETS)[number]): Promise<TrackedWalletSnapshot> {
@@ -170,6 +208,7 @@ export async function loadTrackedWallet(wallet: (typeof TRACKED_WALLETS)[number]
       label: wallet.label,
       shortLabel: wallet.shortLabel,
       address: wallet.address,
+      positionAddresses: trackedPositionAddresses(wallet),
       role: wallet.role,
       balances: await loadWalletBalances(wallet.address),
     };
@@ -178,6 +217,7 @@ export async function loadTrackedWallet(wallet: (typeof TRACKED_WALLETS)[number]
       label: wallet.label,
       shortLabel: wallet.shortLabel,
       address: wallet.address,
+      positionAddresses: trackedPositionAddresses(wallet),
       role: wallet.role,
       balances: { eth: 0n, lfi: 0n, usdc: 0n, aero: 0n },
       error: error instanceof Error ? error.message : String(error),
@@ -199,24 +239,24 @@ function isLfiUsdcPosition(position: LivePosition): boolean {
 }
 
 async function loadOwnerSlipstreamTokenIds(owner: Address, maxItems = DISCOVERY_MAX_WALLET_NFTS, scan: 'head' | 'tail' = 'head'): Promise<bigint[]> {
-  const balance = await client.readContract({
+  const balance = await retryRpc('NFT owner balance', () => client.readContract({
     address: CONTRACTS.nftManager,
     abi: nftManagerAbi,
     functionName: 'balanceOf',
     args: [owner],
-  });
+  }));
   const balanceCount = balance > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(balance);
   const count = Math.min(balanceCount, maxItems);
   if (!Number.isFinite(count) || count <= 0) return [];
   const start = scan === 'tail' && balanceCount > count ? balanceCount - count : 0;
   const indexes = Array.from({ length: count }, (_, index) => start + index);
 
-  return await Promise.all(indexes.map((index) => client.readContract({
+  return await Promise.all(indexes.map((index) => retryRpc('NFT owner token index', () => client.readContract({
     address: CONTRACTS.nftManager,
     abi: nftManagerAbi,
     functionName: 'tokenOfOwnerByIndex',
     args: [owner, BigInt(index)],
-  })));
+  }))));
 }
 
 function pushRecord(records: Map<string, ManagedPositionRecord>, record: ManagedPositionRecord): void {
@@ -226,6 +266,12 @@ function pushRecord(records: Map<string, ManagedPositionRecord>, record: Managed
 
 function appendDiscoveryError(discovery: PositionDiscoverySnapshot, message: string): void {
   discovery.error = discovery.error ? `${discovery.error}; ${message}` : message;
+}
+
+function appendActionableDiscoveryError(discovery: PositionDiscoverySnapshot, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('timed out after')) return;
+  appendDiscoveryError(discovery, message);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -251,7 +297,7 @@ function isNewerLog(
 }
 
 interface GaugeStakeLog {
-  args: { tokenId?: bigint };
+  args: { user?: Address; tokenId?: bigint };
   blockNumber: bigint;
   logIndex: number;
 }
@@ -265,28 +311,29 @@ async function getGaugeLogsChunked(
   const logs: GaugeStakeLog[] = [];
   for (let start = fromBlock; start <= toBlock; start += DISCOVERY_LOG_CHUNK_BLOCKS + 1n) {
     const end = start + DISCOVERY_LOG_CHUNK_BLOCKS > toBlock ? toBlock : start + DISCOVERY_LOG_CHUNK_BLOCKS;
-    const chunk = await client.getLogs({
+    const chunk = await retryRpc('gauge event logs', () => client.getLogs({
       address: CONTRACTS.gauge,
       event,
       args: { user: wallet },
       fromBlock: start,
       toBlock: end,
-    });
+    }));
     logs.push(...chunk);
   }
   return logs;
 }
 
 async function discoverGaugeLogRecords(): Promise<{ records: ManagedPositionRecord[]; logsScanned: number }> {
-  const latestBlock = await client.getBlockNumber();
+  const latestBlock = await retryRpc('latest block', () => client.getBlockNumber());
   const fromBlock = latestBlock > DISCOVERY_RECENT_BLOCKS ? latestBlock - DISCOVERY_RECENT_BLOCKS : 0n;
   const records: ManagedPositionRecord[] = [];
   let logsScanned = 0;
 
   await Promise.all(TRACKED_WALLETS.map(async (wallet) => {
+    const positionAddresses = trackedPositionAddresses(wallet);
     const [deposits, withdrawals] = await Promise.all([
-      getGaugeLogsChunked(gaugeDepositEvent, wallet.address, fromBlock, latestBlock),
-      getGaugeLogsChunked(gaugeWithdrawEvent, wallet.address, fromBlock, latestBlock),
+      Promise.all(positionAddresses.map((address) => getGaugeLogsChunked(gaugeDepositEvent, address, fromBlock, latestBlock))).then((groups) => groups.flat()),
+      Promise.all(positionAddresses.map((address) => getGaugeLogsChunked(gaugeWithdrawEvent, address, fromBlock, latestBlock))).then((groups) => groups.flat()),
     ]);
     logsScanned += deposits.length + withdrawals.length;
     const latestByToken = new Map<string, {
@@ -294,12 +341,13 @@ async function discoverGaugeLogRecords(): Promise<{ records: ManagedPositionReco
       kind: 'deposit' | 'withdraw';
       blockNumber: bigint;
       logIndex: number;
+      depositor: Address;
     }>();
     for (const log of deposits) {
       const tokenId = log.args.tokenId;
       if (tokenId === undefined) continue;
       const key = tokenId.toString();
-      const next = { tokenId, kind: 'deposit' as const, blockNumber: log.blockNumber, logIndex: log.logIndex };
+      const next = { tokenId, kind: 'deposit' as const, blockNumber: log.blockNumber, logIndex: log.logIndex, depositor: log.args.user as Address };
       const current = latestByToken.get(key);
       if (!current || isNewerLog(next, current)) latestByToken.set(key, next);
     }
@@ -307,7 +355,7 @@ async function discoverGaugeLogRecords(): Promise<{ records: ManagedPositionReco
       const tokenId = log.args.tokenId;
       if (tokenId === undefined) continue;
       const key = tokenId.toString();
-      const next = { tokenId, kind: 'withdraw' as const, blockNumber: log.blockNumber, logIndex: log.logIndex };
+      const next = { tokenId, kind: 'withdraw' as const, blockNumber: log.blockNumber, logIndex: log.logIndex, depositor: log.args.user as Address };
       const current = latestByToken.get(key);
       if (!current || isNewerLog(next, current)) latestByToken.set(key, next);
     }
@@ -321,10 +369,10 @@ async function discoverGaugeLogRecords(): Promise<{ records: ManagedPositionReco
         pool: CONTRACTS.pool,
         gauge: CONTRACTS.gauge,
         nftManager: CONTRACTS.nftManager,
-        depositor: wallet.address,
+        depositor: event.depositor,
         enteredAt: 'Discovered live',
         intendedRange: 'Current gauge-staked Slipstream NFT',
-        notes: 'Discovered from recent gauge Deposit/Withdraw logs for the tracked depositor and verified with stakedContains.',
+        notes: 'Discovered from recent gauge Deposit/Withdraw logs for a tracked wallet or LP controller and verified with stakedContains.',
         setupTxs: [],
       });
     }
@@ -338,7 +386,7 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
   for (const record of managedPositions) pushRecord(records, record);
 
   const discovery: PositionDiscoverySnapshot = {
-    source: 'Base RPC depositor logs + ERC-721 enumerable custody verification',
+    source: 'Base RPC wallet/controller depositor logs + ERC-721 enumerable custody verification',
     staticRecords: managedPositions.length,
     walletNftsScanned: 0,
     gaugeNftsScanned: 0,
@@ -347,11 +395,12 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
   };
 
   try {
-    const walletTokenGroups = await Promise.all(TRACKED_WALLETS.map(async (wallet) => ({
+    const walletTokenGroups = await Promise.all(TRACKED_WALLETS.flatMap((wallet) => trackedPositionAddresses(wallet).map(async (address) => ({
       wallet,
-      tokenIds: await loadOwnerSlipstreamTokenIds(wallet.address, DISCOVERY_MAX_WALLET_NFTS, 'head'),
-    })));
-    for (const { wallet, tokenIds } of walletTokenGroups) {
+      address,
+      tokenIds: await loadOwnerSlipstreamTokenIds(address, DISCOVERY_MAX_WALLET_NFTS, 'head'),
+    }))));
+    for (const { wallet, address, tokenIds } of walletTokenGroups) {
       discovery.walletNftsScanned += tokenIds.length;
       for (const tokenId of tokenIds) {
         pushRecord(records, {
@@ -362,10 +411,10 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
           pool: CONTRACTS.pool,
           gauge: CONTRACTS.gauge,
           nftManager: CONTRACTS.nftManager,
-          depositor: wallet.address,
+          depositor: address,
           enteredAt: 'Discovered live',
           intendedRange: 'Current wallet-held Slipstream NFT',
-          notes: 'Discovered from ERC-721 enumerable ownership and verified through Base RPC before display.',
+          notes: 'Discovered from ERC-721 enumerable ownership for a tracked wallet or LP controller and verified through Base RPC before display.',
           setupTxs: [],
         });
       }
@@ -376,7 +425,7 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
       discovery.gaugeLogsScanned = gaugeLogRecords.logsScanned;
       for (const record of gaugeLogRecords.records) pushRecord(records, record);
     } catch (error) {
-      appendDiscoveryError(discovery, error instanceof Error ? error.message : String(error));
+      appendActionableDiscoveryError(discovery, error);
     }
 
     try {
@@ -386,13 +435,13 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
         'Gauge NFT custody sampling',
       );
       discovery.gaugeNftsScanned = gaugeTokenIds.length;
-      await withTimeout(Promise.all(gaugeTokenIds.flatMap((tokenId) => TRACKED_WALLETS.map(async (wallet) => {
-        const staked = await client.readContract({
+      await withTimeout(Promise.all(gaugeTokenIds.flatMap((tokenId) => TRACKED_WALLETS.flatMap((wallet) => trackedPositionAddresses(wallet).map(async (address) => {
+        const staked = await retryRpc('gauge stake membership', () => client.readContract({
           address: CONTRACTS.gauge,
           abi: gaugeAbi,
           functionName: 'stakedContains',
-          args: [wallet.address, tokenId],
-        }).catch(() => false);
+          args: [address, tokenId],
+        })).catch(() => false);
         if (!staked) return;
         pushRecord(records, {
           tokenId,
@@ -402,18 +451,18 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
           pool: CONTRACTS.pool,
           gauge: CONTRACTS.gauge,
           nftManager: CONTRACTS.nftManager,
-          depositor: wallet.address,
+          depositor: address,
           enteredAt: 'Discovered live',
           intendedRange: 'Current gauge-staked Slipstream NFT',
           notes: 'Discovered from recent gauge ERC-721 custody and confirmed with stakedContains(depositor, tokenId).',
           setupTxs: [],
         });
-      }))), DISCOVERY_ENUM_TIMEOUT_MS, 'Gauge depositor membership sampling');
+      })))), DISCOVERY_ENUM_TIMEOUT_MS, 'Gauge depositor membership sampling');
     } catch (error) {
-      appendDiscoveryError(discovery, error instanceof Error ? error.message : String(error));
+      appendActionableDiscoveryError(discovery, error);
     }
   } catch (error) {
-    appendDiscoveryError(discovery, error instanceof Error ? error.message : String(error));
+    appendActionableDiscoveryError(discovery, error);
   }
 
   discovery.discoveredRecords = Math.max(0, records.size - managedPositions.length);
@@ -543,26 +592,27 @@ export async function loadMarketSnapshot(): Promise<MarketSnapshot> {
 export async function loadPosition(record: ManagedPositionRecord): Promise<LivePosition> {
   try {
     const [owner, position] = await Promise.all([
-      client.readContract({ address: record.nftManager, abi: nftManagerAbi, functionName: 'ownerOf', args: [record.tokenId] }),
-      client.readContract({ address: record.nftManager, abi: nftManagerAbi, functionName: 'positions', args: [record.tokenId] }),
+      retryRpc('position owner', () => client.readContract({ address: record.nftManager, abi: nftManagerAbi, functionName: 'ownerOf', args: [record.tokenId] })),
+      retryRpc('position data', () => client.readContract({ address: record.nftManager, abi: nftManagerAbi, functionName: 'positions', args: [record.tokenId] })),
     ]);
 
     let staked = owner.toLowerCase() === record.gauge.toLowerCase();
     let earnedAero = 0n;
-    if (record.depositor) {
-      staked = await client.readContract({
+    const depositor = record.depositor;
+    if (depositor) {
+      staked = await retryRpc('position stake membership', () => client.readContract({
         address: record.gauge,
         abi: gaugeAbi,
         functionName: 'stakedContains',
-        args: [record.depositor, record.tokenId],
-      });
+        args: [depositor, record.tokenId],
+      }));
       if (staked) {
-        earnedAero = await client.readContract({
+        earnedAero = await retryRpc('position earned AERO', () => client.readContract({
           address: record.gauge,
           abi: gaugeAbi,
           functionName: 'earned',
-          args: [record.depositor, record.tokenId],
-        });
+          args: [depositor, record.tokenId],
+        }));
       }
     }
 

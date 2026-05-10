@@ -254,8 +254,8 @@ export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTM
       lineWidth: 2,
       lineStyle: LineStyle.Solid,
       priceLineVisible: true,
-      lastValueVisible: true,
-      title: 'Current tick',
+      lastValueVisible: !options.compact,
+      title: options.compact ? '' : 'Current tick',
       priceFormat: { type: 'price', precision: 8, minMove: 0.00000001 },
     });
     currentLine.setData(edgeData(candles, price));
@@ -267,7 +267,7 @@ export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTM
         lineStyle: LineStyle.Dashed,
         priceLineVisible: false,
         lastValueVisible: false,
-        title: `#${overlay.tokenId} lower`,
+        title: '',
         priceFormat: { type: 'price', precision: 8, minMove: 0.00000001 },
       });
       lowerLine.setData(edgeData(candles, overlay.lowerPrice));
@@ -278,7 +278,7 @@ export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTM
         lineStyle: LineStyle.Dashed,
         priceLineVisible: false,
         lastValueVisible: false,
-        title: `#${overlay.tokenId} upper`,
+        title: '',
         priceFormat: { type: 'price', precision: 8, minMove: 0.00000001 },
       });
       upperLine.setData(edgeData(candles, overlay.upperPrice));

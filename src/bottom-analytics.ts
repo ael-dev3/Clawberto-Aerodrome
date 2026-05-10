@@ -24,7 +24,7 @@ import {
   walletLfiExposurePct,
   walletUsdValue,
 } from './position-valuation';
-import type { DashboardSnapshot, PairMarketSnapshot, TrackedWalletSnapshot } from './rpc';
+import { trackedPositionAddresses, type DashboardSnapshot, type PairMarketSnapshot, type TrackedWalletSnapshot } from './rpc';
 
 interface PortfolioSummary {
   valueUsd: number;
@@ -114,11 +114,11 @@ function pairSideUsd(pair: PairMarketSnapshot | undefined): { baseUsd?: number; 
 }
 
 function positionsForWallet(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot) {
-  const address = wallet.address.toLowerCase();
+  const addresses = new Set(trackedPositionAddresses(wallet).map((address) => address.toLowerCase()));
   return snapshot.positions.filter((position) => {
     if (position.liveError) return false;
-    if (position.depositor?.toLowerCase() === address) return true;
-    if (position.owner?.toLowerCase() === address) return true;
+    if (position.depositor !== undefined && addresses.has(position.depositor.toLowerCase())) return true;
+    if (position.owner !== undefined && addresses.has(position.owner.toLowerCase())) return true;
     return false;
   });
 }

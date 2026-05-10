@@ -1,5 +1,5 @@
 import type { Address } from 'viem';
-import { CONTRACTS, WALLET_ADDRESS } from './config';
+import { CONTRACTS, HUMAN_LP_CONTROLLER_ADDRESS, WALLET_ADDRESS } from './config';
 
 
 export type PositionOrigin = 'hermes-managed' | 'ael-existing' | 'historical';
@@ -38,6 +38,22 @@ export const managedPositions: ManagedPositionRecord[] = [
     notes: 'Live Base RPC shows this as the current positive-liquidity LFI/USDC NFT owned by the Clawberto wallet. It is not gauge-staked, so the dashboard does not assign emissions APR or pending AERO.',
     setupTxs: [
       { label: 'Mint wallet-held NFT #346537', hash: '0x579b90e03c8236d723321e032f81fc004f0d282a7de92f3aad268bd45fd6cb02' },
+    ],
+  },
+  {
+    tokenId: 346853n,
+    label: 'Manual human CL200 staked band',
+    origin: 'ael-existing',
+    pair: 'LFI/USDC',
+    pool: CONTRACTS.pool,
+    gauge: CONTRACTS.gauge,
+    nftManager: CONTRACTS.nftManager,
+    depositor: HUMAN_LP_CONTROLLER_ADDRESS,
+    enteredAt: '2026-05-10',
+    intendedRange: 'Controller-staked CL200 band, -364800 to -363800, verified live before display',
+    notes: 'Seeded from the linked LP controller so live Base RPC always verifies custody, range, liquidity, earned AERO, and token amounts before scoring.',
+    setupTxs: [
+      { label: 'Mint and stake controller NFT #346853', hash: '0xdc6359bb044d66e28f3dca10a6fed61d9905b584afee3925b1772df24a47062c' },
     ],
   },
 ];

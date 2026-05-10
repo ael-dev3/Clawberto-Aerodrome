@@ -8,6 +8,7 @@ import {
   percentFormat,
   profitabilityIndex,
   rangeStatus,
+  rawToDecimal,
   tickLabel,
   tickToAdjustedPrice,
 } from './aero-math';
@@ -17,8 +18,8 @@ import { DASHBOARD_SECTION_ORDER, type DashboardSectionId } from './dashboard-la
 import { renderBottomAnalytics } from './bottom-analytics';
 import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
 import { renderLpRangeChart } from './lp-range-chart';
-import { positionValuation, walletUsdValue } from './position-valuation';
-import { loadDashboardSnapshot, type DashboardSnapshot, type LivePosition, type TrackedWalletSnapshot } from './rpc';
+import { positionValuation, tokenSymbol, walletUsdValue } from './position-valuation';
+import { loadDashboardSnapshot, trackedPositionAddresses, type DashboardSnapshot, type LivePosition, type TrackedWalletSnapshot } from './rpc';
 
 const REFRESH_MS = 15_000;
 const UPTIME_STORAGE_KEY = 'clawberto-range-uptime-v1';
@@ -167,10 +168,13 @@ function renderError(error: unknown): void {
 }
 
 function trackedWalletPositions(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot) {
-  const walletAddress = wallet.address.toLowerCase();
+  const walletAddresses = new Set(trackedPositionAddresses(wallet).map((address) => address.toLowerCase()));
   return snapshot.positions.filter((position) =>
     !position.liveError &&
-    (position.depositor?.toLowerCase() === walletAddress || position.owner?.toLowerCase() === walletAddress),
+    (
+      (position.depositor !== undefined && walletAddresses.has(position.depositor.toLowerCase())) ||
+      (position.owner !== undefined && walletAddresses.has(position.owner.toLowerCase()))
+    ),
   );
 }
 
@@ -197,15 +201,17 @@ function walletChartId(wallet: TrackedWalletSnapshot, index: number): string {
 
 function positionCustodyLabel(position: LivePosition, wallet?: TrackedWalletSnapshot): string {
   if (position.staked) return 'gauge-staked';
-  if (wallet && position.owner?.toLowerCase() === wallet.address.toLowerCase()) return 'wallet-held';
+  const addresses = wallet ? new Set(trackedPositionAddresses(wallet).map((address) => address.toLowerCase())) : new Set<string>();
+  if (position.owner && addresses.has(position.owner.toLowerCase())) return 'wallet-held';
   if (position.owner) return 'external custody';
   return 'custody unknown';
 }
 
 function custodySummary(positions: LivePosition[], wallet: TrackedWalletSnapshot): string {
   if (positions.length === 0) return 'no active LP';
+  const addresses = new Set(trackedPositionAddresses(wallet).map((address) => address.toLowerCase()));
   const staked = positions.filter((position) => position.staked).length;
-  const walletHeld = positions.filter((position) => !position.staked && position.owner?.toLowerCase() === wallet.address.toLowerCase()).length;
+  const walletHeld = positions.filter((position) => !position.staked && position.owner && addresses.has(position.owner.toLowerCase())).length;
   const external = positions.length - staked - walletHeld;
   return [
     staked > 0 ? `${staked} staked` : '',
@@ -219,6 +225,115 @@ function aprBreakdown(summary: { feeAprPct?: number; emissionAprPct?: number }, 
   const fee = summary.feeAprPct === undefined ? 'fees n/a' : `fees ${percentFormat(summary.feeAprPct, 2)}`;
   const emissions = summary.emissionAprPct === undefined ? 'emissions n/a' : `emissions ${percentFormat(summary.emissionAprPct, 2)}`;
   return `${fee} / ${emissions}`;
+}
+
+function numberFormat(value: number | undefined, digits = 2): string {
+  if (value === undefined || !Number.isFinite(value)) return 'n/a';
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
+function tokenAmountFormat(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return 'n/a';
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: value >= 1_000 ? 2 : 6,
+  }).format(value);
+}
+
+function liquiditySharePct(positionLiquidity: bigint | undefined, totalLiquidity: bigint): number | undefined {
+  if (positionLiquidity === undefined || totalLiquidity <= 0n) return undefined;
+  return (Number(positionLiquidity) / Number(totalLiquidity)) * 100;
+}
+
+function rewardAeroPerDay(position: LivePosition, snapshot: DashboardSnapshot): number | undefined {
+  if (!position.staked || position.liquidity === undefined || snapshot.pool.stakedLiquidity <= 0n) return undefined;
+  const rewardPerSecond = rawToDecimal(snapshot.pool.rewardRate, 18);
+  return rewardPerSecond * 86_400 * (Number(position.liquidity) / Number(snapshot.pool.stakedLiquidity));
+}
+
+function stakedTvlUsd(snapshot: DashboardSnapshot): number | undefined {
+  const poolTvl = snapshot.market.managedPair?.liquidityUsd;
+  if (poolTvl === undefined || snapshot.pool.liquidity <= 0n) return undefined;
+  return poolTvl * (Number(snapshot.pool.stakedLiquidity) / Number(snapshot.pool.liquidity));
+}
+
+function walletLinkList(wallet: TrackedWalletSnapshot): string {
+  const addresses = trackedPositionAddresses(wallet);
+  if (addresses.length <= 1) return '';
+  return `
+    <div class="wallet-controller-list">
+      <span>LP controllers</span>
+      ${addresses.slice(1).map((address) => `<a href="${addressLink(address)}" target="_blank" rel="noreferrer">${compactAddress(address)}</a>`).join('')}
+    </div>
+  `;
+}
+
+function renderPositionParameters(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot, positions: LivePosition[]): string {
+  if (positions.length === 0) return '';
+  const poolTvl = snapshot.market.managedPair?.liquidityUsd;
+  const stakedTvl = stakedTvlUsd(snapshot);
+  const poolFee = `${(snapshot.pool.fee / 10_000).toFixed(2)}%`;
+  const weeklyRewardsAero = rawToDecimal(snapshot.pool.rewardRate, 18) * 604_800;
+  const weeklyRewardsUsd = snapshot.market.aeroUsd ? weeklyRewardsAero * snapshot.market.aeroUsd : undefined;
+
+  return `
+    <div class="position-parameter-list">
+      ${positions.map((position) => {
+        const valuation = positionValuation(position, snapshot);
+        const status = position.tickLower !== undefined && position.tickUpper !== undefined
+          ? rangeStatus(snapshot.pool.currentTick, position.tickLower, position.tickUpper)
+          : undefined;
+        const feeApr = status?.state === 'IN_RANGE'
+          ? estimatedFeeAprPct(snapshot.market.managedPair?.volume?.h24, poolFeePct(snapshot), snapshot.market.managedPair?.liquidityUsd) ?? 0
+          : 0;
+        const emissionApr = valuation.aprPct;
+        const totalApr = (emissionApr ?? 0) + feeApr;
+        const dailyAero = rewardAeroPerDay(position, snapshot);
+        const dailyRewardsUsd = dailyAero !== undefined && snapshot.market.aeroUsd ? dailyAero * snapshot.market.aeroUsd : undefined;
+        const earnedAero = rawToDecimal(position.earnedAero ?? 0n, 18);
+        const earnedUsd = valuation.pendingAeroUsd;
+        const token0 = tokenSymbol(position.token0, 'token0');
+        const token1 = tokenSymbol(position.token1, 'token1');
+        const poolShare = liquiditySharePct(position.liquidity, snapshot.pool.liquidity);
+        const rewardShare = position.staked ? liquiditySharePct(position.liquidity, snapshot.pool.stakedLiquidity) : undefined;
+        const rangeLabel = position.tickLower !== undefined && position.tickUpper !== undefined
+          ? `${tickLabel(position.tickLower)} to ${tickLabel(position.tickUpper)}`
+          : 'n/a';
+
+        return `
+          <section class="position-parameter-card">
+            <header>
+              <div>
+                <span>${positionCustodyLabel(position, wallet)}</span>
+                <strong>NFT #${position.tokenId.toString()}</strong>
+              </div>
+              <b class="status ${status ? stateClass(status.state) : 'no-active-lp'}">${status?.state.replaceAll('_', ' ') ?? 'readable'}</b>
+            </header>
+            <div class="position-parameter-grid">
+              <div><span>Deposit value</span><strong>${formatUsd(valuation.usd?.totalUsd)}</strong><small>${tokenAmountFormat(valuation.amounts?.token0)} ${token0} / ${tokenAmountFormat(valuation.amounts?.token1)} ${token1}</small></div>
+              <div><span>Daily rewards</span><strong>${dailyRewardsUsd === undefined ? 'n/a' : formatUsd(dailyRewardsUsd)}</strong><small>${dailyAero === undefined ? 'not staked' : `${numberFormat(dailyAero, 4)} AERO/day`}</small></div>
+              <div><span>Earned</span><strong>${earnedUsd === undefined ? 'n/a' : formatUsd(earnedUsd)}</strong><small>${numberFormat(earnedAero, 4)} AERO</small></div>
+              <div><span>APR</span><strong>${percentFormat(totalApr, 2)}</strong><small>emissions ${emissionApr === undefined ? 'n/a' : percentFormat(emissionApr, 2)} / fees ${percentFormat(feeApr, 2)}</small></div>
+              <div><span>Deposits share</span><strong>${poolShare === undefined ? 'n/a' : percentFormat(poolShare, 2)}</strong><small>reward share ${rewardShare === undefined ? 'n/a' : percentFormat(rewardShare, 2)}</small></div>
+              <div><span>Range</span><strong>${rangeLabel}</strong><small>${status ? `${percentFormat(status.lowerHeadroomPct, 0)} lower / ${percentFormat(status.upperHeadroomPct, 0)} upper` : 'n/a'}</small></div>
+              <div><span>Farm</span><strong>${position.staked ? 'Rewarded' : 'Unstaked'}</strong><small>earned via ${compactAddress(position.depositor ?? wallet.address)}</small></div>
+              <div><span>Cover</span><strong>Uncovered</strong><small>no hedge contract detected</small></div>
+            </div>
+            <div class="position-parameter-kv">
+              <span>Pool TVL <b>${poolTvl === undefined ? 'n/a' : formatUsd(poolTvl)}</b></span>
+              <span>Staked TVL <b>${stakedTvl === undefined ? 'n/a' : formatUsd(stakedTvl)}</b></span>
+              <span>Weekly rewards <b>${weeklyRewardsUsd === undefined ? 'n/a' : formatUsd(weeklyRewardsUsd)} / ${numberFormat(weeklyRewardsAero, 2)} AERO</b></span>
+              <span>Pool fee <b>${poolFee}</b></span>
+              <span>NFT manager <b>${compactAddress(CONTRACTS.nftManager)}</b></span>
+              <span>Farm contract <b>${compactAddress(CONTRACTS.gauge)}</b></span>
+            </div>
+          </section>
+        `;
+      }).join('')}
+    </div>
+  `;
 }
 
 function walletLpSummary(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot, volatilityPct: number) {
@@ -358,6 +473,7 @@ function renderWalletLpPanel(snapshot: DashboardSnapshot, wallet: TrackedWalletS
           <p class="eyebrow">${wallet.role === 'agent' ? 'AI agent' : 'Manual human'}</p>
           <h2>${wallet.shortLabel}</h2>
           <a href="${addressLink(wallet.address)}" target="_blank" rel="noreferrer">${compactAddress(wallet.address)}</a>
+          ${walletLinkList(wallet)}
         </div>
         <span class="status ${summary.status ? stateClass(summary.status.state) : 'no-active-lp'}">${status.replaceAll('_', ' ')}</span>
       </header>
@@ -371,6 +487,7 @@ function renderWalletLpPanel(snapshot: DashboardSnapshot, wallet: TrackedWalletS
       </div>
       ${renderUptime(uptime, summary.rangeState)}
       <div id="${walletChartId(wallet, index)}" class="lp-price-chart wallet-chart" aria-live="polite"></div>
+      ${renderPositionParameters(snapshot, wallet, summary.positions)}
     </article>
   `;
 }
@@ -403,10 +520,14 @@ function renderRangeConsole(snapshot: DashboardSnapshot, historicalCandles: Geck
 function renderDiagnostics(snapshot: DashboardSnapshot): string {
   const stakedRatio = snapshot.pool.liquidity > 0n ? (Number(snapshot.pool.stakedLiquidity) / Number(snapshot.pool.liquidity)) * 100 : 0;
   const positionRows = snapshot.positions.map((position) => {
-    const wallet = snapshot.trackedWallets.find((item) =>
-      item.address.toLowerCase() === position.depositor?.toLowerCase() ||
-      item.address.toLowerCase() === position.owner?.toLowerCase(),
-    );
+    const positionWallets = snapshot.trackedWallets.filter((item) => {
+      const addresses = new Set(trackedPositionAddresses(item).map((address) => address.toLowerCase()));
+      return (
+        (position.depositor !== undefined && addresses.has(position.depositor.toLowerCase())) ||
+        (position.owner !== undefined && addresses.has(position.owner.toLowerCase()))
+      );
+    });
+    const wallet = positionWallets[0];
     const status = position.tickLower !== undefined && position.tickUpper !== undefined
       ? rangeStatus(snapshot.pool.currentTick, position.tickLower, position.tickUpper).state.replaceAll('_', ' ')
       : 'range unknown';

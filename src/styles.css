@@ -208,6 +208,29 @@ button {
   text-decoration: none;
 }
 
+.wallet-controller-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.wallet-controller-list span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.wallet-controller-list a {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 6px;
+  background: var(--surface-2);
+  font-size: 11px;
+}
+
 .wallet-kpi-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -302,6 +325,96 @@ button {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.position-parameter-list {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  background: #0b0f15;
+}
+
+.position-parameter-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.position-parameter-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.position-parameter-card header span,
+.position-parameter-grid span,
+.position-parameter-kv span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.position-parameter-card header strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 16px;
+}
+
+.position-parameter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.position-parameter-grid > div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 9px;
+}
+
+.position-parameter-grid strong {
+  display: block;
+  margin: 5px 0 3px;
+  font-size: 16px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.position-parameter-grid small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.position-parameter-kv {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.position-parameter-kv span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-transform: none;
+}
+
+.position-parameter-kv b {
+  color: var(--text);
+  text-align: right;
   overflow-wrap: anywhere;
 }
 
@@ -966,6 +1079,8 @@ button {
   }
   .range-sidecar,
   .wallet-kpi-grid,
+  .position-parameter-grid,
+  .position-parameter-kv,
   .sidecar-row.triple,
   .metric-strip,
   .position-main,

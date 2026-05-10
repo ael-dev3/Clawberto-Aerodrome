@@ -3,6 +3,7 @@ import type { Address } from 'viem';
 export const BASE_CHAIN_ID = 8453;
 export const WALLET_ADDRESS = '0xC979efda857823bcA9A335a6c7b62A7531e1cFEA' as Address;
 export const COMPARISON_WALLET_ADDRESS = '0x8db2Ef0C439ca22f736A66988a5491a6219F679e' as Address;
+export const HUMAN_LP_CONTROLLER_ADDRESS = '0xB1DC9E197662B50eE3cabAE44aDa9898e9906dD3' as Address;
 
 export const CONTRACTS = {
   pool: '0x8343c68279587498526114e6385f0a87f248e0d9',
@@ -23,10 +24,18 @@ export const TOKEN_META = {
 export const RPC_ENDPOINTS = [
   'https://base-rpc.publicnode.com',
   'https://1rpc.io/base',
+  'https://base.drpc.org',
+  'https://base-mainnet.public.blastapi.io',
   'https://mainnet.base.org',
 ] as const;
 
 export const TRACKED_WALLETS = [
   { label: 'Clawberto agent', shortLabel: 'AI agent', address: WALLET_ADDRESS, role: 'agent' },
-  { label: 'Ael manual wallet', shortLabel: 'Manual human', address: COMPARISON_WALLET_ADDRESS, role: 'human' },
+  {
+    label: 'Ael manual wallet',
+    shortLabel: 'Manual human',
+    address: COMPARISON_WALLET_ADDRESS,
+    role: 'human',
+    positionAddresses: [HUMAN_LP_CONTROLLER_ADDRESS],
+  },
 ] as const;
