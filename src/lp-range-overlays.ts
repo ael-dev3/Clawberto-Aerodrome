@@ -24,6 +24,7 @@ function statusColor(state: string): string {
 
 export function positionToRangeOverlay(position: LivePosition, currentTick: number): LpRangeOverlay | undefined {
   if (position.tickLower === undefined || position.tickUpper === undefined || position.liveError) return undefined;
+  if (position.liquidity === undefined || position.liquidity <= 0n) return undefined;
   const lowerPrice = tickToAdjustedPrice(position.tickLower, LFI_DECIMALS, USDC_DECIMALS);
   const upperPrice = tickToAdjustedPrice(position.tickUpper, LFI_DECIMALS, USDC_DECIMALS);
   const status = rangeStatus(currentTick, position.tickLower, position.tickUpper);

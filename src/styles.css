@@ -276,6 +276,12 @@ button {
 .sidecar-row strong { min-width: 0; font-size: 20px; letter-spacing: 0; overflow-wrap: anywhere; }
 .sidecar-row.triple { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; }
 .sidecar-row.triple strong { font-size: 14px; }
+.sidecar-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
 
 .split-card { display: grid; gap: 8px; }
 .split-line,
@@ -466,7 +472,8 @@ button {
 }
 .chart-metric,
 .chart-source,
-.chart-range-row {
+.chart-range-row,
+.chart-empty-range {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-2);
@@ -486,8 +493,22 @@ button {
   padding: 10px;
 }
 .chart-range-row strong,
-.chart-range-row small { display: block; }
+.chart-range-row small,
+.chart-empty-range strong,
+.chart-empty-range small { display: block; }
 .chart-range-row strong { margin-bottom: 3px; font-size: 13px; }
+.chart-empty-range {
+  padding: 10px;
+}
+.chart-empty-range strong {
+  margin-bottom: 5px;
+  color: var(--text);
+  font-size: 13px;
+}
+.chart-empty-range small {
+  color: var(--muted);
+  line-height: 1.4;
+}
 .range-swatch {
   width: 10px;
   min-height: 100%;
@@ -692,6 +713,9 @@ button {
   .toplinks,
   .head-metrics,
   .wallet-balances { justify-content: flex-start; }
+  .toplinks { width: 100%; }
+  .toplinks a,
+  .toplinks span { min-width: 0; }
   .head-metrics,
   .wallet-balances {
     align-items: flex-start;

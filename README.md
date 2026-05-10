@@ -9,12 +9,12 @@ This repo now includes a Hermes LP control-plane skill for cron-safe monitoring 
 - Hosted dashboard: https://ael-dev3.github.io/Clawberto-Aerodrome/
 - Shows CL200-LFI/USDC live pool tick, current price, active LP range status, gauge custody, top-of-page tracked wallet balances, AERO rewards, and LP history.
 - Tracks the Clawberto agent wallet `0xC979efda857823bcA9A335a6c7b62A7531e1cFEA` and Ael manual wallet `0x8db2Ef0C439ca22f736A66988a5491a6219F679e`.
-- Includes a GeckoTerminal-backed LFI price candle chart with each readable NFT range projected as live price bands.
+- Includes a GeckoTerminal-backed LFI price candle chart with each positive-liquidity NFT range projected as live price bands. Candles still render when no tracked LP is active.
 - Adds bottom-of-page LFI analytics: 1h/2h/6h/12h/24h/48h price windows, pool-side USD sizing, pending emissions, APR stack, IL/hold delta, volatility-based range suggestion, and a manual-human-vs-AI-agent profitability index.
 - The head-to-head score shows each wallet's confirmed LP position size, tracked wallet value, current APR, pending emissions, LFI/USDC LP balance split, range headroom on each side, and confirmed LP NFT count. A wallet always receives ERC-20 balance tracking, but only receives LP credit when the dashboard can attribute a live NFT to that wallet/depositor.
-- Current LP registry: active Hermes NFT `#346034`, range `-365200 → -365000`, staked in the CL gauge with `stakedContains(0xC979...cFEA, 346034) == true` at the remediation check. The previous empty-registry state was corrected after closing stale failed one-cron leftovers and rebalancing drifted NFT `#345949`.
+- Active positions are discovered at runtime from Base RPC by enumerating Slipstream NFTs held by each tracked wallet and by the gauge, then verifying `stakedContains(depositor, tokenId)`. Static records in `src/positions.ts` are historical fallback context, not the only live source.
+- Current LP registry check: active Hermes NFT `#346034`, range `-365200 -> -365000`, staked in the CL gauge with `stakedContains(0xC979...cFEA, 346034) == true` at the remediation check. The previous empty-registry state was corrected after closing stale failed one-cron leftovers and rebalancing drifted NFT `#345949`.
 - Closed stale leftovers during remediation: wallet-owned unstaked NFTs `#345349`, `#345384`, `#345412`, additional orphan `#345174`, and drifted/burned NFT `#345949` before final reentry.
-- Source of truth for displayed active positions: `src/positions.ts`. Every future Aerodrome LP enter/exit must update this registry and redeploy the GitHub Pages site.
 
 ## Scope
 

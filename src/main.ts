@@ -182,10 +182,15 @@ function renderRangeConsole(snapshot: DashboardSnapshot): string {
         <span>Current tick</span><strong>${tickLabel(snapshot.pool.currentTick)}</strong>
         <span>Readable NFTs</span><strong>${readablePositions.length}/${snapshot.positions.length}</strong>
       </div>
+      <div class="sidecar-row triple">
+        <span>Wallet NFTs scanned</span><strong>${snapshot.positionDiscovery.walletNftsScanned}</strong>
+        <span>Gauge NFTs scanned</span><strong>${snapshot.positionDiscovery.gaugeNftsScanned}</strong>
+      </div>
       <div class="reward-grid">
         <div><span>Pool fee</span><strong>${(snapshot.pool.fee / 10_000).toFixed(2)}%</strong><small>Aerodrome CL fee</small></div>
         <div><span>AERO/day</span><strong>${numberFormat(aeroPerDay, 2)}</strong><small>${formatTokenAmount(snapshot.pool.rewardsLeft, 18, 2)} left</small></div>
       </div>
+      <p class="sidecar-note">${snapshot.positionDiscovery.error ? `Discovery issue: ${snapshot.positionDiscovery.error}` : snapshot.positionDiscovery.source}</p>
     </aside>
   `;
 
@@ -238,10 +243,17 @@ function renderDiagnostics(snapshot: DashboardSnapshot): string {
   return `
     <details class="panel history-panel diagnostics-panel" data-section="diagnostics-secondary">
       <summary>
-        <span><b>Diagnostics</b><em>Pool liquidity ${compactNumber(snapshot.pool.liquidity)} / staked ${percentFormat(stakedRatio, 1)}${issuePositions.length ? ` / ${issuePositions.length} read issue${issuePositions.length === 1 ? '' : 's'}` : ''}</em></span>
+        <span><b>Diagnostics</b><em>Pool liquidity ${compactNumber(snapshot.pool.liquidity)} / staked ${percentFormat(stakedRatio, 1)} / discovery ${snapshot.positionDiscovery.discoveredRecords} live candidate${snapshot.positionDiscovery.discoveredRecords === 1 ? '' : 's'}${issuePositions.length ? ` / ${issuePositions.length} read issue${issuePositions.length === 1 ? '' : 's'}` : ''}</em></span>
         <strong>Open details</strong>
       </summary>
       <div class="timeline">
+        <div class="timeline-row">
+          <span>Discovery</span>
+          <div>
+            <strong>${snapshot.positionDiscovery.source}</strong>
+            <p>${snapshot.positionDiscovery.walletNftsScanned} wallet NFTs scanned / ${snapshot.positionDiscovery.gaugeNftsScanned} gauge NFTs scanned / ${snapshot.positionDiscovery.discoveredRecords} tracked candidates${snapshot.positionDiscovery.error ? ` / ${snapshot.positionDiscovery.error}` : ''}</p>
+          </div>
+        </div>
         <div class="timeline-row">
           <span>Pool</span>
           <div>

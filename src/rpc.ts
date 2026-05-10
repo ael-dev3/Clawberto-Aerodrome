@@ -8,6 +8,7 @@ import { managedPositions, type ManagedPositionRecord } from './positions';
 const AERO_DEXSCREENER_URL = `https://api.dexscreener.com/latest/dex/tokens/${CONTRACTS.aero}`;
 const DEXSCREENER_PAIR_URL = 'https://api.dexscreener.com/latest/dex/pairs/base';
 const MARKET_TIMEOUT_MS = 5_000;
+const DISCOVERY_MAX_OWNER_NFTS = 120;
 
 export const client = createPublicClient({
   chain: base,
@@ -62,6 +63,7 @@ export interface DashboardSnapshot {
   walletBalances: WalletBalances;
   trackedWallets: TrackedWalletSnapshot[];
   market: MarketSnapshot;
+  positionDiscovery: PositionDiscoverySnapshot;
   loadedAt: Date;
 }
 
@@ -111,6 +113,15 @@ export interface TrackedWalletSnapshot {
   address: Address;
   role: string;
   balances: WalletBalances;
+  error?: string;
+}
+
+export interface PositionDiscoverySnapshot {
+  source: string;
+  staticRecords: number;
+  walletNftsScanned: number;
+  gaugeNftsScanned: number;
+  discoveredRecords: number;
   error?: string;
 }
 
@@ -164,6 +175,114 @@ export async function loadTrackedWallet(wallet: (typeof TRACKED_WALLETS)[number]
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function isLfiUsdcPosition(position: LivePosition): boolean {
+  const token0 = position.token0?.toLowerCase();
+  const token1 = position.token1?.toLowerCase();
+  return (
+    token0 !== undefined &&
+    token1 !== undefined &&
+    (
+      (token0 === CONTRACTS.lfi.toLowerCase() && token1 === CONTRACTS.usdc.toLowerCase()) ||
+      (token0 === CONTRACTS.usdc.toLowerCase() && token1 === CONTRACTS.lfi.toLowerCase())
+    )
+  );
+}
+
+async function loadOwnerSlipstreamTokenIds(owner: Address, maxItems = DISCOVERY_MAX_OWNER_NFTS): Promise<bigint[]> {
+  const balance = await client.readContract({
+    address: CONTRACTS.nftManager,
+    abi: nftManagerAbi,
+    functionName: 'balanceOf',
+    args: [owner],
+  });
+  const count = Math.min(Number(balance), maxItems);
+  if (!Number.isFinite(count) || count <= 0) return [];
+
+  return await Promise.all(Array.from({ length: count }, (_, index) => client.readContract({
+    address: CONTRACTS.nftManager,
+    abi: nftManagerAbi,
+    functionName: 'tokenOfOwnerByIndex',
+    args: [owner, BigInt(index)],
+  })));
+}
+
+function pushRecord(records: Map<string, ManagedPositionRecord>, record: ManagedPositionRecord): void {
+  const key = `${record.nftManager.toLowerCase()}:${record.tokenId.toString()}:${record.depositor?.toLowerCase() ?? 'owner'}`;
+  if (!records.has(key)) records.set(key, record);
+}
+
+async function discoverPositionRecords(): Promise<{ records: ManagedPositionRecord[]; discovery: PositionDiscoverySnapshot }> {
+  const records = new Map<string, ManagedPositionRecord>();
+  for (const record of managedPositions) pushRecord(records, record);
+
+  const discovery: PositionDiscoverySnapshot = {
+    source: 'Base RPC ERC-721 enumerable ownership + gauge depositor verification',
+    staticRecords: managedPositions.length,
+    walletNftsScanned: 0,
+    gaugeNftsScanned: 0,
+    discoveredRecords: 0,
+  };
+
+  try {
+    const walletTokenGroups = await Promise.all(TRACKED_WALLETS.map(async (wallet) => ({
+      wallet,
+      tokenIds: await loadOwnerSlipstreamTokenIds(wallet.address),
+    })));
+    for (const { wallet, tokenIds } of walletTokenGroups) {
+      discovery.walletNftsScanned += tokenIds.length;
+      for (const tokenId of tokenIds) {
+        pushRecord(records, {
+          tokenId,
+          label: `${wallet.shortLabel} wallet NFT`,
+          origin: wallet.role === 'agent' ? 'hermes-managed' : 'ael-existing',
+          pair: 'LFI/USDC',
+          pool: CONTRACTS.pool,
+          gauge: CONTRACTS.gauge,
+          nftManager: CONTRACTS.nftManager,
+          depositor: wallet.address,
+          enteredAt: 'Discovered live',
+          intendedRange: 'Current wallet-held Slipstream NFT',
+          notes: 'Discovered from ERC-721 enumerable ownership and verified through Base RPC before display.',
+          setupTxs: [],
+        });
+      }
+    }
+
+    const gaugeTokenIds = await loadOwnerSlipstreamTokenIds(CONTRACTS.gauge);
+    discovery.gaugeNftsScanned = gaugeTokenIds.length;
+    for (const tokenId of gaugeTokenIds) {
+      await Promise.all(TRACKED_WALLETS.map(async (wallet) => {
+        const staked = await client.readContract({
+          address: CONTRACTS.gauge,
+          abi: gaugeAbi,
+          functionName: 'stakedContains',
+          args: [wallet.address, tokenId],
+        }).catch(() => false);
+        if (!staked) return;
+        pushRecord(records, {
+          tokenId,
+          label: `${wallet.shortLabel} staked NFT`,
+          origin: wallet.role === 'agent' ? 'hermes-managed' : 'ael-existing',
+          pair: 'LFI/USDC',
+          pool: CONTRACTS.pool,
+          gauge: CONTRACTS.gauge,
+          nftManager: CONTRACTS.nftManager,
+          depositor: wallet.address,
+          enteredAt: 'Discovered live',
+          intendedRange: 'Current gauge-staked Slipstream NFT',
+          notes: 'Discovered from gauge ERC-721 enumerable custody and confirmed with stakedContains(depositor, tokenId).',
+          setupTxs: [],
+        });
+      }));
+    }
+  } catch (error) {
+    discovery.error = error instanceof Error ? error.message : String(error);
+  }
+
+  discovery.discoveredRecords = Math.max(0, records.size - managedPositions.length);
+  return { records: [...records.values()], discovery };
 }
 
 export async function loadAeroUsdPrice(): Promise<MarketSnapshot> {
@@ -332,15 +451,25 @@ export async function loadPosition(record: ManagedPositionRecord): Promise<LiveP
 }
 
 export async function loadDashboardSnapshot(): Promise<DashboardSnapshot> {
-  const [pool, trackedWallets, positions, market] = await Promise.all([
+  const [pool, trackedWallets, discovered, market] = await Promise.all([
     loadPoolSnapshot(),
     Promise.all(TRACKED_WALLETS.map((wallet) => loadTrackedWallet(wallet))),
-    Promise.all(managedPositions.map((record) => loadPosition(record))),
+    discoverPositionRecords(),
     loadMarketSnapshot(),
   ]);
+  const rawPositions = await Promise.all(discovered.records.map((record) => loadPosition(record)));
+  const positions = rawPositions.filter((position) => position.liveError || isLfiUsdcPosition(position));
   const walletBalances = trackedWallets.find((wallet) => wallet.address.toLowerCase() === WALLET_ADDRESS.toLowerCase())?.balances
     ?? { eth: 0n, lfi: 0n, usdc: 0n, aero: 0n };
-  return { pool, walletBalances, trackedWallets, positions, market, loadedAt: new Date() };
+  return {
+    pool,
+    walletBalances,
+    trackedWallets,
+    positions,
+    market,
+    positionDiscovery: discovered.discovery,
+    loadedAt: new Date(),
+  };
 }
 
 export function tokenDecimals(address?: Address): number {

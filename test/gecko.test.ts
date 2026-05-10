@@ -72,6 +72,7 @@ describe('LP price overlays', () => {
           pair: 'LFI/USDC',
           tickLower: -373_000,
           tickUpper: -361_800,
+          liquidity: 1_000_000n,
           setupTxs: [],
         },
         {
@@ -90,5 +91,25 @@ describe('LP price overlays', () => {
     expect(overlays[0].tokenId).toBe('341439');
     expect(overlays[0].lowerPrice).toBeLessThan(overlays[0].upperPrice);
     expect(overlays[0].status.state).toBe('IN_RANGE');
+  });
+
+  it('does not draw LP overlays for closed zero-liquidity NFTs', () => {
+    const snapshot = {
+      pool: { currentTick: -365_879 },
+      positions: [
+        {
+          tokenId: 345395n,
+          label: 'Closed one-tick band',
+          origin: 'hermes-managed',
+          pair: 'LFI/USDC',
+          tickLower: -364_600,
+          tickUpper: -364_400,
+          liquidity: 0n,
+          setupTxs: [],
+        },
+      ],
+    } as unknown as Pick<DashboardSnapshot, 'pool' | 'positions'>;
+
+    expect(buildRangeOverlays(snapshot)).toHaveLength(0);
   });
 });

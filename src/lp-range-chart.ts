@@ -80,7 +80,12 @@ function renderLegend(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[], s
       </div>
       <div class="chart-source">${source}</div>
       <div class="chart-range-list">
-        ${overlays.map((overlay) => `
+        ${overlays.length === 0 ? `
+          <div class="chart-empty-range">
+            <strong>No active LP overlay</strong>
+            <small>Price candles are live. Range bands appear automatically when a tracked wallet owns or stakes a readable LFI/USDC Slipstream NFT.</small>
+          </div>
+        ` : overlays.map((overlay) => `
           <div class="chart-range-row">
             <span class="range-swatch" style="--range-color: ${overlay.color}"></span>
             <div>
@@ -157,12 +162,6 @@ export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTM
   resetChart();
   mount.classList.remove('compact-chart');
   const overlays = buildRangeOverlays(snapshot);
-  if (overlays.length === 0) {
-    mount.classList.add('compact-chart');
-    mount.innerHTML = '<div class="chart-state compact-state"><strong>No active readable LP ranges</strong><span>Tracked NFTs are empty, closed, or unavailable from the current RPC read.</span></div>';
-    return;
-  }
-
   const renderToken = ++activeRenderToken;
   mount.innerHTML = renderLoading(snapshot, overlays);
 
