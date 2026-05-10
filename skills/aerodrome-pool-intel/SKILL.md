@@ -42,6 +42,7 @@ Use this skill for deterministic Aerodrome discovery and pool quality analysis o
 - Reference/tracked existing NFT: `341002`
 - Live dashboard: `https://ael-dev3.github.io/Clawberto-Aerodrome/`
 - Dashboard source of truth: `src/positions.ts`
+- Dashboard presentation contract: keep the LP range console first, no marketing hero, embed the live GeckoTerminal candle/range chart in the first panel, show the current Hermes-managed NFT as the primary active card, and collapse unreadable reference/watchlist NFTs into LP history diagnostics instead of noisy active error cards.
 - Full LP management notes: `references/cl-lfi-usdc-lp-management.md`
 
 ## Quick start
