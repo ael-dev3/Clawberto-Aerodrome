@@ -11,6 +11,7 @@ const MARKET_TIMEOUT_MS = 5_000;
 const RPC_RETRY_ATTEMPTS = 3;
 const RPC_RETRY_BASE_DELAY_MS = 350;
 const DISCOVERY_MAX_WALLET_NFTS = 120;
+const DISCOVERY_MAX_STAKED_NFTS = 120;
 const DISCOVERY_MAX_GAUGE_NFTS = 48;
 const DISCOVERY_RECENT_BLOCKS = 9_500n;
 const DISCOVERY_LOG_CHUNK_BLOCKS = 9_500n;
@@ -51,6 +52,7 @@ export interface LivePosition extends ManagedPositionRecord {
   staked?: boolean;
   earnedAero?: bigint;
   liveError?: string;
+  liveWarning?: string;
 }
 
 export interface WalletBalances {
@@ -259,6 +261,25 @@ async function loadOwnerSlipstreamTokenIds(owner: Address, maxItems = DISCOVERY_
   }))));
 }
 
+async function loadGaugeStakedTokenIds(depositor: Address, maxItems = DISCOVERY_MAX_STAKED_NFTS): Promise<bigint[]> {
+  const balance = await retryRpc('gauge staked NFT count', () => client.readContract({
+    address: CONTRACTS.gauge,
+    abi: gaugeAbi,
+    functionName: 'stakedLength',
+    args: [depositor],
+  }));
+  const balanceCount = balance > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(balance);
+  const count = Math.min(balanceCount, maxItems);
+  if (!Number.isFinite(count) || count <= 0) return [];
+
+  return await Promise.all(Array.from({ length: count }, (_, index) => retryRpc('gauge staked NFT index', () => client.readContract({
+    address: CONTRACTS.gauge,
+    abi: gaugeAbi,
+    functionName: 'stakedByIndex',
+    args: [depositor, BigInt(index)],
+  }))));
+}
+
 function pushRecord(records: Map<string, ManagedPositionRecord>, record: ManagedPositionRecord): void {
   const key = `${record.nftManager.toLowerCase()}:${record.tokenId.toString()}:${record.depositor?.toLowerCase() ?? 'owner'}`;
   if (!records.has(key)) records.set(key, record);
@@ -386,7 +407,7 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
   for (const record of managedPositions) pushRecord(records, record);
 
   const discovery: PositionDiscoverySnapshot = {
-    source: 'Base RPC wallet/controller depositor logs + ERC-721 enumerable custody verification',
+    source: 'Base RPC wallet/controller NFT custody + direct gauge stake enumeration',
     staticRecords: managedPositions.length,
     walletNftsScanned: 0,
     gaugeNftsScanned: 0,
@@ -420,6 +441,31 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
       }
     }
 
+    const stakedTokenGroups = await Promise.all(TRACKED_WALLETS.flatMap((wallet) => trackedPositionAddresses(wallet).map(async (address) => ({
+      wallet,
+      address,
+      tokenIds: await loadGaugeStakedTokenIds(address),
+    }))));
+    for (const { wallet, address, tokenIds } of stakedTokenGroups) {
+      discovery.gaugeNftsScanned += tokenIds.length;
+      for (const tokenId of tokenIds) {
+        pushRecord(records, {
+          tokenId,
+          label: `${wallet.shortLabel} staked NFT`,
+          origin: wallet.role === 'agent' ? 'hermes-managed' : 'ael-existing',
+          pair: 'LFI/USDC',
+          pool: CONTRACTS.pool,
+          gauge: CONTRACTS.gauge,
+          nftManager: CONTRACTS.nftManager,
+          depositor: address,
+          enteredAt: 'Discovered live',
+          intendedRange: 'Current gauge-staked Slipstream NFT',
+          notes: 'Discovered from gauge stakedByIndex(depositor, index) for a tracked wallet or LP controller and verified through Base RPC before display.',
+          setupTxs: [],
+        });
+      }
+    }
+
     try {
       const gaugeLogRecords = await withTimeout(discoverGaugeLogRecords(), DISCOVERY_LOG_TIMEOUT_MS, 'Gauge depositor log discovery');
       discovery.gaugeLogsScanned = gaugeLogRecords.logsScanned;
@@ -434,7 +480,7 @@ async function discoverPositionRecords(): Promise<{ records: ManagedPositionReco
         DISCOVERY_ENUM_TIMEOUT_MS,
         'Gauge NFT custody sampling',
       );
-      discovery.gaugeNftsScanned = gaugeTokenIds.length;
+      discovery.gaugeNftsScanned += gaugeTokenIds.length;
       await withTimeout(Promise.all(gaugeTokenIds.flatMap((tokenId) => TRACKED_WALLETS.flatMap((wallet) => trackedPositionAddresses(wallet).map(async (address) => {
         const staked = await retryRpc('gauge stake membership', () => client.readContract({
           address: CONTRACTS.gauge,
@@ -597,22 +643,33 @@ export async function loadPosition(record: ManagedPositionRecord): Promise<LiveP
     ]);
 
     let staked = owner.toLowerCase() === record.gauge.toLowerCase();
-    let earnedAero = 0n;
+    let earnedAero: bigint | undefined = staked ? undefined : 0n;
+    let liveWarning: string | undefined;
     const depositor = record.depositor;
     if (depositor) {
-      staked = await retryRpc('position stake membership', () => client.readContract({
-        address: record.gauge,
-        abi: gaugeAbi,
-        functionName: 'stakedContains',
-        args: [depositor, record.tokenId],
-      }));
-      if (staked) {
-        earnedAero = await retryRpc('position earned AERO', () => client.readContract({
+      try {
+        staked = await retryRpc('position stake membership', () => client.readContract({
           address: record.gauge,
           abi: gaugeAbi,
-          functionName: 'earned',
+          functionName: 'stakedContains',
           args: [depositor, record.tokenId],
         }));
+      } catch (error) {
+        liveWarning = `Stake membership read failed; using ownerOf custody: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      if (staked) {
+        try {
+          earnedAero = await retryRpc('position earned AERO', () => client.readContract({
+            address: record.gauge,
+            abi: gaugeAbi,
+            functionName: 'earned',
+            args: [depositor, record.tokenId],
+          }));
+        } catch (error) {
+          liveWarning = liveWarning
+            ? `${liveWarning}; Earned AERO read failed: ${error instanceof Error ? error.message : String(error)}`
+            : `Earned AERO read failed: ${error instanceof Error ? error.message : String(error)}`;
+        }
       }
     }
 
@@ -629,6 +686,7 @@ export async function loadPosition(record: ManagedPositionRecord): Promise<LiveP
       tokensOwed1: position[11],
       staked,
       earnedAero,
+      liveWarning,
     };
   } catch (error) {
     return { ...record, liveError: error instanceof Error ? error.message : String(error) };

@@ -28,6 +28,7 @@ interface ChartMountState {
 export interface LpRangeChartOptions {
   positions?: DashboardSnapshot['positions'];
   compact?: boolean;
+  candles?: GeckoCandle[];
   emptyTitle?: string;
   emptyDescription?: string;
 }
@@ -189,7 +190,7 @@ export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTM
   mount.innerHTML = renderLoading(snapshot, overlays, options.compact);
 
   try {
-    const candles = await fetchGeckoPoolOhlcv();
+    const candles = options.candles && options.candles.length > 0 ? options.candles : await fetchGeckoPoolOhlcv();
     if (renderToken !== state.renderToken || !mount.isConnected) return;
 
     mount.innerHTML = renderChartFrame(snapshot, overlays, candles, options);

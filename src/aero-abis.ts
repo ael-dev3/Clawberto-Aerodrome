@@ -47,6 +47,8 @@ export const nftManagerAbi = [
 export const gaugeAbi = [
   { type: 'function', name: 'rewardRate', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'left', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'stakedLength', stateMutability: 'view', inputs: [{ name: 'depositor', type: 'address' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'stakedByIndex', stateMutability: 'view', inputs: [{ name: 'depositor', type: 'address' }, { name: 'index', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'stakedContains', stateMutability: 'view', inputs: [{ name: 'depositor', type: 'address' }, { name: 'tokenId', type: 'uint256' }], outputs: [{ type: 'bool' }] },
   { type: 'function', name: 'earned', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }, { name: 'tokenId', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
 ] as const;

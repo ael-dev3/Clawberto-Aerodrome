@@ -292,7 +292,7 @@ function renderPositionParameters(snapshot: DashboardSnapshot, wallet: TrackedWa
         const totalApr = (emissionApr ?? 0) + feeApr;
         const dailyAero = rewardAeroPerDay(position, snapshot);
         const dailyRewardsUsd = dailyAero !== undefined && snapshot.market.aeroUsd ? dailyAero * snapshot.market.aeroUsd : undefined;
-        const earnedAero = rawToDecimal(position.earnedAero ?? 0n, 18);
+        const earnedAero = position.earnedAero === undefined ? undefined : rawToDecimal(position.earnedAero, 18);
         const earnedUsd = valuation.pendingAeroUsd;
         const token0 = tokenSymbol(position.token0, 'token0');
         const token1 = tokenSymbol(position.token1, 'token1');
@@ -314,7 +314,7 @@ function renderPositionParameters(snapshot: DashboardSnapshot, wallet: TrackedWa
             <div class="position-parameter-grid">
               <div><span>Deposit value</span><strong>${formatUsd(valuation.usd?.totalUsd)}</strong><small>${tokenAmountFormat(valuation.amounts?.token0)} ${token0} / ${tokenAmountFormat(valuation.amounts?.token1)} ${token1}</small></div>
               <div><span>Daily rewards</span><strong>${dailyRewardsUsd === undefined ? 'n/a' : formatUsd(dailyRewardsUsd)}</strong><small>${dailyAero === undefined ? 'not staked' : `${numberFormat(dailyAero, 4)} AERO/day`}</small></div>
-              <div><span>Earned</span><strong>${earnedUsd === undefined ? 'n/a' : formatUsd(earnedUsd)}</strong><small>${numberFormat(earnedAero, 4)} AERO</small></div>
+              <div><span>Earned</span><strong>${earnedUsd === undefined ? 'n/a' : formatUsd(earnedUsd)}</strong><small>${earnedAero === undefined ? 'read pending' : `${numberFormat(earnedAero, 4)} AERO`}</small></div>
               <div><span>APR</span><strong>${percentFormat(totalApr, 2)}</strong><small>emissions ${emissionApr === undefined ? 'n/a' : percentFormat(emissionApr, 2)} / fees ${percentFormat(feeApr, 2)}</small></div>
               <div><span>Deposits share</span><strong>${poolShare === undefined ? 'n/a' : percentFormat(poolShare, 2)}</strong><small>reward share ${rewardShare === undefined ? 'n/a' : percentFormat(rewardShare, 2)}</small></div>
               <div><span>Range</span><strong>${rangeLabel}</strong><small>${status ? `${percentFormat(status.lowerHeadroomPct, 0)} lower / ${percentFormat(status.upperHeadroomPct, 0)} upper` : 'n/a'}</small></div>
@@ -539,7 +539,7 @@ function renderDiagnostics(snapshot: DashboardSnapshot): string {
             <span>NFT #${position.tokenId.toString()}</span>
             <div>
               <strong>${wallet?.shortLabel ?? 'Tracked wallet'} / ${positionCustodyLabel(position, wallet)}</strong>
-              <p>${status} / ${range} / liquidity ${compactNumber(position.liquidity)}</p>
+              <p>${status} / ${range} / liquidity ${compactNumber(position.liquidity)}${position.liveWarning ? ` / ${position.liveWarning}` : ''}</p>
             </div>
           </div>
         `;
@@ -605,6 +605,7 @@ function renderDashboard(snapshot: DashboardSnapshot, historicalCandles: GeckoCa
       void renderLpRangeChart(snapshot, chartMount, {
         positions: trackedWalletPositions(snapshot, wallet),
         compact: true,
+        candles: historicalCandles,
         emptyTitle: `No ${wallet.shortLabel} active LP`,
         emptyDescription: 'Live candles stay visible. A range appears here only when Base RPC attributes a positive-liquidity LFI/USDC NFT to this wallet.',
       });
