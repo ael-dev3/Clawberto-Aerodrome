@@ -18,7 +18,6 @@ export interface LpRangeOverlay {
 
 function statusColor(state: string): string {
   if (state === 'IN_RANGE') return '#16c784';
-  if (state === 'BELOW_RANGE') return '#f6b73c';
   return '#ff5c7a';
 }
 

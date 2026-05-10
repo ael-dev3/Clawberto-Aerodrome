@@ -1,7 +1,9 @@
 import {
   alignTickDown,
   alignTickUp,
+  estimatePositionTokenAmounts,
   priceToAdjustedTick,
+  rawToDecimal,
   tickToAdjustedPrice,
 } from './aero-math';
 import type { GeckoCandle } from './gecko';
@@ -32,6 +34,8 @@ export interface SuggestedLpRange {
   volatilityWidthPct: number;
   heatmapRegimeMultiplier: number;
   heatmapCurrentVolatilityPct?: number;
+  modeledEmissionAprPct?: number;
+  capitalEfficiencyPct?: number;
 }
 
 export interface VolatilityHeatmapCell {
@@ -55,6 +59,13 @@ export interface VolatilityHeatmap {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+export interface EmissionRangeModel {
+  rewardRateRaw: bigint;
+  rewardTokenUsd: number;
+  totalStakedLiquidity: bigint;
+  rewardTokenDecimals?: number;
 }
 
 function latestClose(candles: GeckoCandle[]): GeckoCandle | undefined {
@@ -181,6 +192,7 @@ export function suggestedLpRangeFromCandles(input: {
   token0Decimals: number;
   token1Decimals: number;
   emissionAprPct?: number;
+  emissionModel?: EmissionRangeModel;
   heatmapRegimeMultiplier?: number;
 }): SuggestedLpRange {
   const currentPrice = tickToAdjustedPrice(input.currentTick, input.token0Decimals, input.token1Decimals);
@@ -192,15 +204,27 @@ export function suggestedLpRangeFromCandles(input: {
   const heatmapRegimeMultiplier = clamp(input.heatmapRegimeMultiplier ?? heatmap?.currentRegimeMultiplier ?? 1, 0.75, 1.6);
   const heatmapAdjustedVolatility = volatility * heatmapRegimeMultiplier;
   const heatmapAdjustedObservedMove = observedMove * Math.sqrt(heatmapRegimeMultiplier);
-  const volatilityWidthPct = Math.max(12, heatmapAdjustedVolatility * 2, heatmapAdjustedObservedMove * 1.1);
+  const volatilityWidthPct = Math.max(6, heatmapAdjustedVolatility * 0.55, heatmapAdjustedObservedMove * 0.42);
   const emissionApr = input.emissionAprPct !== undefined && Number.isFinite(input.emissionAprPct)
     ? Math.max(0, input.emissionAprPct)
     : undefined;
   const emissionTighteningPct = emissionApr === undefined
     ? 0
-    : Math.min(42, Math.log10(1 + emissionApr) * 12);
-  const minimumWidthPct = Math.max(6, heatmapAdjustedVolatility * 0.75);
-  const halfWidthPct = Math.min(85, Math.max(minimumWidthPct, volatilityWidthPct * (1 - emissionTighteningPct / 100)));
+    : Math.min(58, Math.log10(1 + emissionApr) * 15);
+  const minimumWidthPct = Math.max(3, heatmapAdjustedVolatility * 0.18);
+  const heuristicHalfWidthPct = Math.min(55, Math.max(minimumWidthPct, volatilityWidthPct * (1 - emissionTighteningPct / 100)));
+
+  const candidate = bestRangeCandidate({
+    currentPrice,
+    currentTick: input.currentTick,
+    tickSpacing: input.tickSpacing,
+    token0Decimals: input.token0Decimals,
+    token1Decimals: input.token1Decimals,
+    riskHalfWidthPct: volatilityWidthPct,
+    heuristicHalfWidthPct,
+    emissionModel: input.emissionModel,
+  });
+  const halfWidthPct = candidate?.halfWidthPct ?? heuristicHalfWidthPct;
   const lowerPrice = currentPrice * Math.max(0.01, 1 - halfWidthPct / 100);
   const upperPrice = currentPrice * (1 + halfWidthPct / 100);
   const lowerTick = alignTickDown(priceToAdjustedTick(lowerPrice, input.token0Decimals, input.token1Decimals), input.tickSpacing);
@@ -220,5 +244,93 @@ export function suggestedLpRangeFromCandles(input: {
     volatilityWidthPct,
     heatmapRegimeMultiplier,
     heatmapCurrentVolatilityPct: heatmap?.currentCell?.sampleCount ? heatmap.currentCell.volatilityPct : undefined,
+    modeledEmissionAprPct: candidate?.modeledEmissionAprPct,
+    capitalEfficiencyPct: candidate?.capitalEfficiencyPct,
+  };
+}
+
+function modeledEmissionAprForRange(input: {
+  currentTick: number;
+  lowerTick: number;
+  upperTick: number;
+  token0Decimals: number;
+  token1Decimals: number;
+  token0Usd: number;
+  token1Usd: number;
+  emissionModel: EmissionRangeModel;
+}): number | undefined {
+  const unitLiquidity = 1_000_000_000_000_000_000n;
+  const amounts = estimatePositionTokenAmounts({
+    liquidity: unitLiquidity,
+    currentTick: input.currentTick,
+    lowerTick: input.lowerTick,
+    upperTick: input.upperTick,
+    token0Decimals: input.token0Decimals,
+    token1Decimals: input.token1Decimals,
+  });
+  const unitUsd = amounts.token0 * input.token0Usd + amounts.token1 * input.token1Usd;
+  const totalStakedLiquidity = Number(input.emissionModel.totalStakedLiquidity);
+  if (
+    unitUsd <= 0 ||
+    totalStakedLiquidity <= 0 ||
+    input.emissionModel.rewardTokenUsd <= 0
+  ) {
+    return undefined;
+  }
+  const rewardPerSecond = rawToDecimal(input.emissionModel.rewardRateRaw, input.emissionModel.rewardTokenDecimals ?? 18);
+  const liquidityPerDollar = Number(unitLiquidity) / unitUsd;
+  const annualRewardUsd = rewardPerSecond * 31_536_000 * input.emissionModel.rewardTokenUsd;
+  return annualRewardUsd * (liquidityPerDollar / totalStakedLiquidity) * 100;
+}
+
+function bestRangeCandidate(input: {
+  currentPrice: number;
+  currentTick: number;
+  tickSpacing: number;
+  token0Decimals: number;
+  token1Decimals: number;
+  riskHalfWidthPct: number;
+  heuristicHalfWidthPct: number;
+  emissionModel?: EmissionRangeModel;
+}): { halfWidthPct: number; modeledEmissionAprPct?: number; capitalEfficiencyPct?: number } | undefined {
+  if (!input.emissionModel) return undefined;
+  const candidates: Array<{ halfWidthPct: number; modeledEmissionAprPct: number; score: number }> = [];
+  const maxHalfWidth = Math.max(14, Math.min(45, input.heuristicHalfWidthPct * 1.35));
+  for (let halfWidthPct = 3; halfWidthPct <= maxHalfWidth; halfWidthPct += 0.5) {
+    const lowerPrice = input.currentPrice * Math.max(0.01, 1 - halfWidthPct / 100);
+    const upperPrice = input.currentPrice * (1 + halfWidthPct / 100);
+    const lowerTick = alignTickDown(priceToAdjustedTick(lowerPrice, input.token0Decimals, input.token1Decimals), input.tickSpacing);
+    const upperTick = alignTickUp(priceToAdjustedTick(upperPrice, input.token0Decimals, input.token1Decimals), input.tickSpacing);
+    if (upperTick <= lowerTick) continue;
+    const modeledEmissionAprPct = modeledEmissionAprForRange({
+      currentTick: input.currentTick,
+      lowerTick,
+      upperTick,
+      token0Decimals: input.token0Decimals,
+      token1Decimals: input.token1Decimals,
+      token0Usd: input.currentPrice,
+      token1Usd: 1,
+      emissionModel: input.emissionModel,
+    });
+    if (modeledEmissionAprPct === undefined) continue;
+    candidates.push({ halfWidthPct, modeledEmissionAprPct, score: 0 });
+  }
+  if (candidates.length === 0) return undefined;
+  const maxApr = Math.max(...candidates.map((candidate) => candidate.modeledEmissionAprPct), 0);
+  if (maxApr <= 0) return undefined;
+
+  let best = candidates[0];
+  for (const candidate of candidates) {
+    const coverage = clamp(candidate.halfWidthPct / Math.max(1, input.riskHalfWidthPct), 0, 1);
+    const aprRetention = clamp(candidate.modeledEmissionAprPct / maxApr, 0, 1);
+    const widthPenalty = candidate.halfWidthPct / maxHalfWidth;
+    candidate.score = coverage * 0.46 + aprRetention * 0.5 - widthPenalty * 0.08;
+    if (candidate.score > best.score) best = candidate;
+  }
+
+  return {
+    halfWidthPct: best.halfWidthPct,
+    modeledEmissionAprPct: best.modeledEmissionAprPct,
+    capitalEfficiencyPct: (best.modeledEmissionAprPct / maxApr) * 100,
   };
 }

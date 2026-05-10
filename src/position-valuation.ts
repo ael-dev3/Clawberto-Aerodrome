@@ -25,13 +25,21 @@ export interface PositionValuation {
   fullRangeIlPct?: number;
 }
 
+export interface PoolReserveBreakdown {
+  lfi: number;
+  usdc: number;
+  lfiUsd: number;
+  usdcUsd: number;
+  totalUsd: number;
+}
+
 export function tokenSymbol(address: string | undefined, fallback: string): string {
   if (!address) return fallback;
   return Object.entries(TOKEN_META).find(([knownAddress]) => knownAddress.toLowerCase() === address.toLowerCase())?.[1].symbol ?? fallback;
 }
 
 export function lfiUsd(snapshot: DashboardSnapshot): number {
-  return snapshot.market.lfiUsd ?? tickToAdjustedPrice(snapshot.pool.currentTick, 18, 6);
+  return tickToAdjustedPrice(snapshot.pool.currentTick, 18, 6);
 }
 
 export function tokenUsd(address: Address | undefined, snapshot: DashboardSnapshot): number {
@@ -40,6 +48,19 @@ export function tokenUsd(address: Address | undefined, snapshot: DashboardSnapsh
   if (symbol === 'AERO') return snapshot.market.aeroUsd ?? 0;
   if (symbol === 'LFI') return lfiUsd(snapshot);
   return 0;
+}
+
+export function poolReserveBreakdown(snapshot: DashboardSnapshot): PoolReserveBreakdown {
+  const lfi = rawToDecimal(snapshot.pool.lfiBalance, 18);
+  const usdc = rawToDecimal(snapshot.pool.usdcBalance, 6);
+  const lfiValue = lfi * lfiUsd(snapshot);
+  return {
+    lfi,
+    usdc,
+    lfiUsd: lfiValue,
+    usdcUsd: usdc,
+    totalUsd: lfiValue + usdc,
+  };
 }
 
 function owedUsd(position: LivePosition, snapshot: DashboardSnapshot): number | undefined {

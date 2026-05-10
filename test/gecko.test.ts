@@ -90,6 +90,42 @@ describe('LFI analytics windows', () => {
     expect(highEmission.emissionTighteningPct).toBeGreaterThan(0);
   });
 
+  it('models reward APR decay instead of recommending extremely wide emission ranges', () => {
+    const currentTick = -364_713;
+    const basePrice = tickToAdjustedPrice(currentTick, 18, 6);
+    const candles = Array.from({ length: 96 }, (_, index) => {
+      const move = Math.sin(index / 5) * 0.04;
+      const close = basePrice * (1 + move);
+      return {
+        time: 1_700_000_000 + index * 3_600,
+        open: close,
+        high: close * 1.025,
+        low: close * 0.975,
+        close,
+        volume: 1_000,
+      };
+    });
+
+    const suggestion = suggestedLpRangeFromCandles({
+      candles,
+      currentTick,
+      tickSpacing: 200,
+      token0Decimals: 18,
+      token1Decimals: 6,
+      emissionAprPct: 5_900,
+      emissionModel: {
+        rewardRateRaw: 53_331_651_729_488_687n,
+        rewardTokenUsd: 0.55,
+        totalStakedLiquidity: 25_753_706_376_743_808_315n,
+      },
+      heatmapRegimeMultiplier: 1.3,
+    });
+
+    expect(suggestion.totalWidthPct).toBeLessThan(35);
+    expect(suggestion.modeledEmissionAprPct).toBeGreaterThan(0);
+    expect(suggestion.capitalEfficiencyPct).toBeGreaterThan(50);
+  });
+
   it('builds a weekday-hour volatility heatmap from hourly candles', () => {
     const start = Date.UTC(2026, 0, 4, 0, 0, 0) / 1_000;
     let close = 100;

@@ -18,7 +18,7 @@ import { DASHBOARD_SECTION_ORDER, type DashboardSectionId } from './dashboard-la
 import { renderBottomAnalytics } from './bottom-analytics';
 import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
 import { renderLpRangeChart } from './lp-range-chart';
-import { positionValuation, tokenSymbol, walletUsdValue } from './position-valuation';
+import { poolReserveBreakdown, positionValuation, tokenSymbol, walletUsdValue } from './position-valuation';
 import { loadDashboardSnapshot, trackedPositionAddresses, type DashboardSnapshot, type LivePosition, type TrackedWalletSnapshot } from './rpc';
 
 const REFRESH_MS = 15_000;
@@ -27,6 +27,7 @@ const app = document.querySelector<HTMLDivElement>('#app') ?? failMissingRoot();
 type WalletRangeState = 'inRange' | 'outOfRange' | 'noPosition';
 
 interface WalletUptimeStats {
+  firstSeenMs: number;
   lastSeenMs: number;
   lastState: WalletRangeState;
   inRangeMs: number;
@@ -53,6 +54,7 @@ function loadPersistedUptime(): Map<string, WalletUptimeStats> {
     const parsed = JSON.parse(raw) as Record<string, Partial<WalletUptimeStats>>;
     const entries: Array<[string, WalletUptimeStats]> = Object.entries(parsed).flatMap(([key, value]) => {
       const lastSeenMs = value?.lastSeenMs;
+      const firstSeenMs = value?.firstSeenMs;
       const inRangeMs = value?.inRangeMs;
       const outOfRangeMs = value?.outOfRangeMs;
       const noPositionMs = value?.noPositionMs;
@@ -71,6 +73,7 @@ function loadPersistedUptime(): Map<string, WalletUptimeStats> {
         return [];
       }
       return [[key, {
+        firstSeenMs: typeof firstSeenMs === 'number' && Number.isFinite(firstSeenMs) ? firstSeenMs : lastSeenMs,
         lastSeenMs,
         lastState,
         inRangeMs: Math.max(0, inRangeMs),
@@ -97,7 +100,18 @@ function addressLink(address: string): string {
 }
 
 function stateClass(state: string): string {
-  return state.toLowerCase().replaceAll('_', '-');
+  if (state === 'IN_RANGE') return 'in-range';
+  if (state === 'NO_ACTIVE_LP') return 'no-active-lp';
+  if (state === 'READABLE') return 'readable';
+  return 'out-of-range';
+}
+
+function statusLabel(state: string | undefined): string {
+  if (state === undefined) return 'READABLE';
+  if (state === 'IN_RANGE') return 'IN RANGE';
+  if (state === 'NO_ACTIVE_LP') return 'NO ACTIVE LP';
+  if (state === 'READABLE') return 'READABLE';
+  return 'OUT OF RANGE';
 }
 
 function compactNumber(value: bigint | number | null | undefined): string {
@@ -222,9 +236,9 @@ function custodySummary(positions: LivePosition[], wallet: TrackedWalletSnapshot
 
 function aprBreakdown(summary: { feeAprPct?: number; emissionAprPct?: number }, positions: LivePosition[]): string {
   if (positions.length === 0) return 'no active LP';
-  const fee = summary.feeAprPct === undefined ? 'fees n/a' : `fees ${percentFormat(summary.feeAprPct, 2)}`;
-  const emissions = summary.emissionAprPct === undefined ? 'emissions n/a' : `emissions ${percentFormat(summary.emissionAprPct, 2)}`;
-  return `${fee} / ${emissions}`;
+  const emissions = summary.emissionAprPct === undefined ? 'rewards n/a' : `rewards ${percentFormat(summary.emissionAprPct, 2)}`;
+  const fee = summary.feeAprPct === undefined ? 'fee est n/a' : `fee est ${percentFormat(summary.feeAprPct, 2)}`;
+  return `${emissions} / ${fee}`;
 }
 
 function numberFormat(value: number | undefined, digits = 2): string {
@@ -238,13 +252,19 @@ function numberFormat(value: number | undefined, digits = 2): string {
 function tokenAmountFormat(value: number | undefined): string {
   if (value === undefined || !Number.isFinite(value)) return 'n/a';
   return new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: value >= 1_000 ? 2 : 6,
+    maximumFractionDigits: value >= 1_000 ? 5 : 6,
   }).format(value);
 }
 
 function liquiditySharePct(positionLiquidity: bigint | undefined, totalLiquidity: bigint): number | undefined {
   if (positionLiquidity === undefined || totalLiquidity <= 0n) return undefined;
   return (Number(positionLiquidity) / Number(totalLiquidity)) * 100;
+}
+
+function livePoolTvlUsd(snapshot: DashboardSnapshot): number | undefined {
+  const reserveTvl = poolReserveBreakdown(snapshot).totalUsd;
+  if (Number.isFinite(reserveTvl) && reserveTvl > 0) return reserveTvl;
+  return snapshot.market.managedPair?.liquidityUsd;
 }
 
 function rewardAeroPerDay(position: LivePosition, snapshot: DashboardSnapshot): number | undefined {
@@ -254,7 +274,7 @@ function rewardAeroPerDay(position: LivePosition, snapshot: DashboardSnapshot): 
 }
 
 function stakedTvlUsd(snapshot: DashboardSnapshot): number | undefined {
-  const poolTvl = snapshot.market.managedPair?.liquidityUsd;
+  const poolTvl = livePoolTvlUsd(snapshot);
   if (poolTvl === undefined || snapshot.pool.liquidity <= 0n) return undefined;
   return poolTvl * (Number(snapshot.pool.stakedLiquidity) / Number(snapshot.pool.liquidity));
 }
@@ -272,7 +292,7 @@ function walletLinkList(wallet: TrackedWalletSnapshot): string {
 
 function renderPositionParameters(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot, positions: LivePosition[]): string {
   if (positions.length === 0) return '';
-  const poolTvl = snapshot.market.managedPair?.liquidityUsd;
+  const poolTvl = livePoolTvlUsd(snapshot);
   const stakedTvl = stakedTvlUsd(snapshot);
   const poolFee = `${(snapshot.pool.fee / 10_000).toFixed(2)}%`;
   const weeklyRewardsAero = rawToDecimal(snapshot.pool.rewardRate, 18) * 604_800;
@@ -289,14 +309,16 @@ function renderPositionParameters(snapshot: DashboardSnapshot, wallet: TrackedWa
           ? estimatedFeeAprPct(snapshot.market.managedPair?.volume?.h24, poolFeePct(snapshot), snapshot.market.managedPair?.liquidityUsd) ?? 0
           : 0;
         const emissionApr = valuation.aprPct;
-        const totalApr = (emissionApr ?? 0) + feeApr;
+        const displayApr = emissionApr ?? 0;
         const dailyAero = rewardAeroPerDay(position, snapshot);
         const dailyRewardsUsd = dailyAero !== undefined && snapshot.market.aeroUsd ? dailyAero * snapshot.market.aeroUsd : undefined;
         const earnedAero = position.earnedAero === undefined ? undefined : rawToDecimal(position.earnedAero, 18);
         const earnedUsd = valuation.pendingAeroUsd;
         const token0 = tokenSymbol(position.token0, 'token0');
         const token1 = tokenSymbol(position.token1, 'token1');
-        const poolShare = liquiditySharePct(position.liquidity, snapshot.pool.liquidity);
+        const poolShare = valuation.usd?.totalUsd !== undefined && poolTvl !== undefined && poolTvl > 0
+          ? (valuation.usd.totalUsd / poolTvl) * 100
+          : liquiditySharePct(position.liquidity, snapshot.pool.liquidity);
         const rewardShare = position.staked ? liquiditySharePct(position.liquidity, snapshot.pool.stakedLiquidity) : undefined;
         const rangeLabel = position.tickLower !== undefined && position.tickUpper !== undefined
           ? `${tickLabel(position.tickLower)} to ${tickLabel(position.tickUpper)}`
@@ -309,13 +331,13 @@ function renderPositionParameters(snapshot: DashboardSnapshot, wallet: TrackedWa
                 <span>${positionCustodyLabel(position, wallet)}</span>
                 <strong>NFT #${position.tokenId.toString()}</strong>
               </div>
-              <b class="status ${status ? stateClass(status.state) : 'no-active-lp'}">${status?.state.replaceAll('_', ' ') ?? 'readable'}</b>
+              <b class="status ${status ? stateClass(status.state) : 'no-active-lp'}">${statusLabel(status?.state)}</b>
             </header>
             <div class="position-parameter-grid">
               <div><span>Deposit value</span><strong>${formatUsd(valuation.usd?.totalUsd)}</strong><small>${tokenAmountFormat(valuation.amounts?.token0)} ${token0} / ${tokenAmountFormat(valuation.amounts?.token1)} ${token1}</small></div>
               <div><span>Daily rewards</span><strong>${dailyRewardsUsd === undefined ? 'n/a' : formatUsd(dailyRewardsUsd)}</strong><small>${dailyAero === undefined ? 'not staked' : `${numberFormat(dailyAero, 4)} AERO/day`}</small></div>
               <div><span>Earned</span><strong>${earnedUsd === undefined ? 'n/a' : formatUsd(earnedUsd)}</strong><small>${earnedAero === undefined ? 'read pending' : `${numberFormat(earnedAero, 4)} AERO`}</small></div>
-              <div><span>APR</span><strong>${percentFormat(totalApr, 2)}</strong><small>emissions ${emissionApr === undefined ? 'n/a' : percentFormat(emissionApr, 2)} / fees ${percentFormat(feeApr, 2)}</small></div>
+              <div><span>APR</span><strong>${percentFormat(displayApr, 2)}</strong><small>rewards ${emissionApr === undefined ? 'n/a' : percentFormat(emissionApr, 2)} / fee est ${percentFormat(feeApr, 2)}</small></div>
               <div><span>Deposits share</span><strong>${poolShare === undefined ? 'n/a' : percentFormat(poolShare, 2)}</strong><small>reward share ${rewardShare === undefined ? 'n/a' : percentFormat(rewardShare, 2)}</small></div>
               <div><span>Range</span><strong>${rangeLabel}</strong><small>${status ? `${percentFormat(status.lowerHeadroomPct, 0)} lower / ${percentFormat(status.upperHeadroomPct, 0)} upper` : 'n/a'}</small></div>
               <div><span>Farm</span><strong>${position.staked ? 'Rewarded' : 'Unstaked'}</strong><small>earned via ${compactAddress(position.depositor ?? wallet.address)}</small></div>
@@ -395,7 +417,7 @@ function walletLpSummary(snapshot: DashboardSnapshot, wallet: TrackedWalletSnaps
     pendingAeroUsd,
     emissionAprPct: emissionApr,
     feeAprPct: feeApr,
-    aprPct: emissionApr !== undefined || feeApr !== undefined ? (emissionApr ?? 0) + (feeApr ?? 0) : undefined,
+    aprPct: emissionApr,
     index,
     rangeState,
     status: primary?.status,
@@ -409,6 +431,7 @@ function walletLpSummary(snapshot: DashboardSnapshot, wallet: TrackedWalletSnaps
 function updateWalletUptime(wallet: TrackedWalletSnapshot, state: WalletRangeState, nowMs: number): WalletUptimeStats {
   const key = wallet.address.toLowerCase();
   const current = walletUptimeStats.get(key) ?? {
+    firstSeenMs: nowMs,
     lastSeenMs: nowMs,
     lastState: state,
     inRangeMs: 0,
@@ -429,11 +452,12 @@ function updateWalletUptime(wallet: TrackedWalletSnapshot, state: WalletRangeSta
 }
 
 function renderUptime(stats: WalletUptimeStats, state: WalletRangeState): string {
-  const total = stats.inRangeMs + stats.outOfRangeMs + stats.noPositionMs;
+  const unavailableMs = stats.outOfRangeMs + stats.noPositionMs;
+  const total = stats.inRangeMs + unavailableMs;
   const inPct = total > 0 ? (stats.inRangeMs / total) * 100 : state === 'inRange' ? 100 : 0;
-  const outPct = total > 0 ? (stats.outOfRangeMs / total) * 100 : state === 'outOfRange' ? 100 : 0;
-  const nonePct = total > 0 ? (stats.noPositionMs / total) * 100 : state === 'noPosition' ? 100 : 0;
+  const unavailablePct = total > 0 ? (unavailableMs / total) * 100 : state === 'inRange' ? 0 : 100;
   const label = state === 'inRange' ? 'in range' : state === 'outOfRange' ? 'out of range' : 'no active LP';
+  const trackingSince = new Date(stats.firstSeenMs).toLocaleString();
   return `
     <div class="uptime-card">
       <div class="uptime-head">
@@ -442,15 +466,13 @@ function renderUptime(stats: WalletUptimeStats, state: WalletRangeState): string
       </div>
       <div class="uptime-bar" aria-label="Range uptime split">
         <i class="uptime-in" style="width: ${inPct}%"></i>
-        <i class="uptime-out" style="width: ${outPct}%"></i>
-        <i class="uptime-none" style="width: ${nonePct}%"></i>
+        <i class="uptime-out" style="width: ${unavailablePct}%"></i>
       </div>
       <div class="uptime-legend">
         <span><b class="uptime-in"></b>${durationFormat(stats.inRangeMs)} in</span>
-        <span><b class="uptime-out"></b>${durationFormat(stats.outOfRangeMs)} out</span>
-        <span><b class="uptime-none"></b>${durationFormat(stats.noPositionMs)} none</span>
+        <span><b class="uptime-out"></b>${durationFormat(unavailableMs)} out/no position</span>
       </div>
-      <small>Current: ${label}</small>
+      <small>Current: ${label} / tracking since ${trackingSince}</small>
     </div>
   `;
 }
@@ -458,6 +480,7 @@ function renderUptime(stats: WalletUptimeStats, state: WalletRangeState): string
 function renderWalletLpPanel(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot, index: number, volatilityPct: number): string {
   const walletUsd = walletUsdValue(snapshot, wallet.balances);
   const summary = walletLpSummary(snapshot, wallet, volatilityPct);
+  const totalTrackedUsd = walletUsd + summary.lpUsd;
   const uptime = updateWalletUptime(wallet, summary.rangeState, snapshot.loadedAt.getTime());
   const status = summary.status?.state ?? (summary.positions.length > 0 ? 'READABLE' : 'NO_ACTIVE_LP');
   const sideSplit = summary.lfiSidePct === undefined || summary.usdcSidePct === undefined
@@ -475,7 +498,7 @@ function renderWalletLpPanel(snapshot: DashboardSnapshot, wallet: TrackedWalletS
           <a href="${addressLink(wallet.address)}" target="_blank" rel="noreferrer">${compactAddress(wallet.address)}</a>
           ${walletLinkList(wallet)}
         </div>
-        <span class="status ${summary.status ? stateClass(summary.status.state) : 'no-active-lp'}">${status.replaceAll('_', ' ')}</span>
+        <span class="status ${stateClass(status)}">${statusLabel(status)}</span>
       </header>
       <div class="wallet-kpi-grid">
         <div><span>Profitability</span><strong>${scoreFormat(summary.index)}</strong><small>history-based index</small></div>
@@ -483,7 +506,7 @@ function renderWalletLpPanel(snapshot: DashboardSnapshot, wallet: TrackedWalletS
         <div><span>APR</span><strong>${summary.aprPct === undefined ? 'n/a' : percentFormat(summary.aprPct, 2)}</strong><small>${aprBreakdown(summary, summary.positions)}</small></div>
         <div><span>Pending</span><strong>${formatTokenAmount(summary.pendingAero, 18, 4)} AERO</strong><small>${summary.positions.length === 0 ? 'no active LP' : summary.positions.some((position) => position.staked) ? formatUsd(summary.pendingAeroUsd) : 'not gauge-staked'}</small></div>
         <div><span>LP split</span><strong>${sideSplit}</strong><small>${rangeHeadroom}</small></div>
-        <div><span>Wallet</span><strong>${formatUsd(walletUsd)}</strong><small>${formatTokenAmount(wallet.balances.lfi, 18, 2)} LFI</small></div>
+        <div><span>Total tracked</span><strong>${formatUsd(totalTrackedUsd)}</strong><small>${formatUsd(summary.lpUsd)} LP / ${formatUsd(walletUsd)} idle</small></div>
       </div>
       ${renderUptime(uptime, summary.rangeState)}
       <div id="${walletChartId(wallet, index)}" class="lp-price-chart wallet-chart" aria-live="polite"></div>
@@ -529,7 +552,7 @@ function renderDiagnostics(snapshot: DashboardSnapshot): string {
     });
     const wallet = positionWallets[0];
     const status = position.tickLower !== undefined && position.tickUpper !== undefined
-      ? rangeStatus(snapshot.pool.currentTick, position.tickLower, position.tickUpper).state.replaceAll('_', ' ')
+      ? statusLabel(rangeStatus(snapshot.pool.currentTick, position.tickLower, position.tickUpper).state).toLowerCase()
       : 'range unknown';
     const range = position.tickLower !== undefined && position.tickUpper !== undefined
       ? `${tickLabel(position.tickLower)} to ${tickLabel(position.tickUpper)}`

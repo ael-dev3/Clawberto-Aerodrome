@@ -20,6 +20,7 @@ import { CONTRACTS } from './config';
 import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
 import {
   lfiUsd,
+  poolReserveBreakdown,
   positionValuation,
   walletLfiExposurePct,
   walletUsdValue,
@@ -100,17 +101,6 @@ function weightedAverage(items: Array<{ value?: number; weight?: number }>): num
 
 function poolFeePct(snapshot: DashboardSnapshot): number {
   return snapshot.pool.fee / 1_000_000;
-}
-
-function pairSideUsd(pair: PairMarketSnapshot | undefined): { baseUsd?: number; quoteUsd?: number } {
-  if (!pair?.liquidityBase || !pair.priceUsd) return {};
-  const baseUsd = pair.liquidityBase * pair.priceUsd;
-  const quoteUsd = pair.quoteSymbol?.toUpperCase() === 'USDC' && pair.liquidityQuote
-    ? pair.liquidityQuote
-    : pair.liquidityUsd && Number.isFinite(pair.liquidityUsd)
-      ? Math.max(0, pair.liquidityUsd - baseUsd)
-      : undefined;
-  return { baseUsd, quoteUsd };
 }
 
 function positionsForWallet(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot) {
@@ -200,9 +190,7 @@ function summarizeCompetitor(snapshot: DashboardSnapshot, wallet: TrackedWalletS
     value: item.status?.upperHeadroomPct,
     weight: item.valuation.usd?.totalUsd,
   })));
-  const aprPct = lp.emissionAprPct !== undefined || lp.feeAprPct !== undefined
-    ? (lp.emissionAprPct ?? 0) + (lp.feeAprPct ?? 0)
-    : undefined;
+  const aprPct = lp.emissionAprPct;
 
   return {
     ...lp,
@@ -226,9 +214,22 @@ function currentEmissionAprPct(snapshot: DashboardSnapshot): number | undefined 
     return { value: valuation.aprPct, weight: valuation.usd?.totalUsd };
   }));
   if (activeEmissionApr !== undefined) return activeEmissionApr;
-  if (!snapshot.market.aeroUsd || !snapshot.market.managedPair?.liquidityUsd || snapshot.market.managedPair.liquidityUsd <= 0) return undefined;
+  const stakedTvl = stakedTvlUsd(snapshot);
+  if (!snapshot.market.aeroUsd || stakedTvl === undefined || stakedTvl <= 0) return undefined;
   const annualEmissionUsd = rawToDecimal(snapshot.pool.rewardRate, 18) * 31_536_000 * snapshot.market.aeroUsd;
-  return (annualEmissionUsd / snapshot.market.managedPair.liquidityUsd) * 100;
+  return (annualEmissionUsd / stakedTvl) * 100;
+}
+
+function livePoolTvlUsd(snapshot: DashboardSnapshot): number | undefined {
+  const reserveTvl = poolReserveBreakdown(snapshot).totalUsd;
+  if (Number.isFinite(reserveTvl) && reserveTvl > 0) return reserveTvl;
+  return snapshot.market.managedPair?.liquidityUsd;
+}
+
+function stakedTvlUsd(snapshot: DashboardSnapshot): number | undefined {
+  const poolTvl = livePoolTvlUsd(snapshot);
+  if (poolTvl === undefined || snapshot.pool.liquidity <= 0n) return undefined;
+  return poolTvl * (Number(snapshot.pool.stakedLiquidity) / Number(snapshot.pool.liquidity));
 }
 
 function fallbackWindowChange(pair: PairMarketSnapshot | undefined, hours: number): number | undefined {
@@ -257,7 +258,7 @@ function renderPriceWindows(candles: GeckoCandle[], fallbackPair?: PairMarketSna
 
 function renderPoolComposition(snapshot: DashboardSnapshot): string {
   const pair = snapshot.market.managedPair;
-  const sides = pairSideUsd(pair);
+  const reserves = poolReserveBreakdown(snapshot);
   const feeApr = estimatedFeeAprPct(pair?.volume?.h24, poolFeePct(snapshot), pair?.liquidityUsd);
   return `
     <section class="analytics-card">
@@ -266,11 +267,12 @@ function renderPoolComposition(snapshot: DashboardSnapshot): string {
         <strong>${pair?.baseSymbol ?? 'LFI'}/${pair?.quoteSymbol ?? 'USDC'}</strong>
       </header>
       <div class="analytics-two-col">
-        <div><span>${pair?.baseSymbol ?? 'LFI'} side</span><strong>${compactUsd(sides.baseUsd)}</strong><small>${numberFormat(pair?.liquidityBase, 2)} ${pair?.baseSymbol ?? 'LFI'}</small></div>
-        <div><span>${pair?.quoteSymbol ?? 'USDC'} side</span><strong>${compactUsd(sides.quoteUsd)}</strong><small>${numberFormat(pair?.liquidityQuote, 2)} ${pair?.quoteSymbol ?? 'USDC'}</small></div>
+        <div><span>LFI side</span><strong>${compactUsd(reserves.lfiUsd)}</strong><small>${numberFormat(reserves.lfi, 2)} LFI</small></div>
+        <div><span>USDC side</span><strong>${compactUsd(reserves.usdcUsd)}</strong><small>${numberFormat(reserves.usdc, 2)} USDC</small></div>
       </div>
       <div class="analytics-kv">
-        <span>Total liquidity <b>${compactUsd(pair?.liquidityUsd)}</b></span>
+        <span>Pool token balances <b>${compactUsd(reserves.totalUsd)}</b></span>
+        <span>Rewarded TVL estimate <b>${compactUsd(stakedTvlUsd(snapshot))}</b></span>
         <span>24h volume <b>${compactUsd(pair?.volume?.h24)}</b></span>
         <span>Estimated fee APR <b>${feeApr === undefined ? 'n/a' : percentFormat(feeApr, 2)}</b></span>
       </div>
@@ -289,6 +291,14 @@ function renderRangeSuggestion(snapshot: DashboardSnapshot, candles: GeckoCandle
     token0Decimals: 18,
     token1Decimals: 6,
     emissionAprPct,
+    emissionModel: snapshot.market.aeroUsd
+      ? {
+        rewardRateRaw: snapshot.pool.rewardRate,
+        rewardTokenUsd: snapshot.market.aeroUsd,
+        totalStakedLiquidity: snapshot.pool.stakedLiquidity,
+        rewardTokenDecimals: 18,
+      }
+      : undefined,
     heatmapRegimeMultiplier: heatmap.currentRegimeMultiplier,
   });
   const currentHeatmapVol = heatmap.currentCell && heatmap.currentCell.sampleCount > 0
@@ -311,8 +321,10 @@ function renderRangeSuggestion(snapshot: DashboardSnapshot, candles: GeckoCandle
         <span>48h observed move <b>${percentFormat(suggestion.observedMovePct, 2)}</b></span>
         <span>Weekday/hour volatility regime <b>${heatmap.sampleCount > 0 ? `${numberFormat(suggestion.heatmapRegimeMultiplier, 2)}x` : 'n/a'}</b></span>
         <span>Current heatmap volatility <b>${currentHeatmapVol}</b></span>
-        <span>Emission APR input <b>${suggestion.emissionAprPct === undefined ? 'n/a' : percentFormat(suggestion.emissionAprPct, 2)}</b></span>
-        <span>Emission width adjustment <b>-${percentFormat(suggestion.emissionTighteningPct, 1)}</b></span>
+        <span>Current reward APR input <b>${suggestion.emissionAprPct === undefined ? 'n/a' : percentFormat(suggestion.emissionAprPct, 2)}</b></span>
+        <span>Modeled reward APR <b>${suggestion.modeledEmissionAprPct === undefined ? 'n/a' : percentFormat(suggestion.modeledEmissionAprPct, 2)}</b></span>
+        <span>Capital efficiency <b>${suggestion.capitalEfficiencyPct === undefined ? 'n/a' : percentFormat(suggestion.capitalEfficiencyPct, 1)}</b></span>
+        <span>Reward width adjustment <b>-${percentFormat(suggestion.emissionTighteningPct, 1)}</b></span>
       </div>
     </section>
   `;
@@ -406,12 +418,12 @@ function renderProfitability(agent: CompetitorSummary, human: CompetitorSummary)
         <div>
           <span>Agent APR stack</span>
           <strong>${agent.aprPct === undefined ? 'n/a' : percentFormat(agent.aprPct, 2)}</strong>
-          <small>emissions ${agent.emissionAprPct === undefined ? 'n/a' : percentFormat(agent.emissionAprPct, 2)} / fees ${agent.feeAprPct === undefined ? 'n/a' : percentFormat(agent.feeAprPct, 2)}</small>
+          <small>rewards ${agent.emissionAprPct === undefined ? 'n/a' : percentFormat(agent.emissionAprPct, 2)} / fee est ${agent.feeAprPct === undefined ? 'n/a' : percentFormat(agent.feeAprPct, 2)}</small>
         </div>
         <div>
           <span>Manual APR stack</span>
           <strong>${human.aprPct === undefined ? 'n/a' : percentFormat(human.aprPct, 2)}</strong>
-          <small>emissions ${human.emissionAprPct === undefined ? 'n/a' : percentFormat(human.emissionAprPct, 2)} / fees ${human.feeAprPct === undefined ? 'n/a' : percentFormat(human.feeAprPct, 2)}</small>
+          <small>rewards ${human.emissionAprPct === undefined ? 'n/a' : percentFormat(human.emissionAprPct, 2)} / fee est ${human.feeAprPct === undefined ? 'n/a' : percentFormat(human.feeAprPct, 2)}</small>
         </div>
         <div>
           <span>Manual wallet LFI exposure</span>

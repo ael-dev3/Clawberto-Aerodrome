@@ -34,6 +34,8 @@ export interface PoolSnapshot {
   sqrtPriceX96: bigint;
   liquidity: bigint;
   stakedLiquidity: bigint;
+  lfiBalance: bigint;
+  usdcBalance: bigint;
   fee: number;
   rewardRate: bigint;
   rewardsLeft: bigint;
@@ -163,10 +165,12 @@ async function retryRpc<T>(label: string, read: () => Promise<T>): Promise<T> {
 }
 
 export async function loadPoolSnapshot(): Promise<PoolSnapshot> {
-  const [slot0, liquidity, stakedLiquidity, fee, rewardRate, rewardsLeft] = await Promise.all([
+  const [slot0, liquidity, stakedLiquidity, lfiBalance, usdcBalance, fee, rewardRate, rewardsLeft] = await Promise.all([
     retryRpc('pool slot0', () => client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'slot0' })),
     retryRpc('pool liquidity', () => client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'liquidity' })),
     retryRpc('pool stakedLiquidity', () => client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'stakedLiquidity' })),
+    retryRpc('pool LFI balance', () => client.readContract({ address: CONTRACTS.lfi, abi: erc20Abi, functionName: 'balanceOf', args: [CONTRACTS.pool] })),
+    retryRpc('pool USDC balance', () => client.readContract({ address: CONTRACTS.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [CONTRACTS.pool] })),
     retryRpc('pool fee', () => client.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'fee' })),
     retryRpc('gauge rewardRate', () => client.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'rewardRate' })),
     retryRpc('gauge rewardsLeft', () => client.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'left' })),
@@ -177,6 +181,8 @@ export async function loadPoolSnapshot(): Promise<PoolSnapshot> {
     currentTick: slot0[1],
     liquidity,
     stakedLiquidity,
+    lfiBalance,
+    usdcBalance,
     fee,
     rewardRate,
     rewardsLeft,
