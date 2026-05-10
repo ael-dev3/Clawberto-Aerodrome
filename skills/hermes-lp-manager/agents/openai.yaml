@@ -1,0 +1,9 @@
+interface:
+  display_name: "Hermes LP Manager"
+  short_description: "Cron-safe Aerodrome CL LP orchestration and rebalance planning"
+  default_prompt: "Use $hermes-lp-manager to run Hermes control loops for Aerodrome CL LP monitoring, guarded rebalance planning, cron heartbeats, and execution-prep artifacts."
+  brand_color: "#14b8a6"
+dependencies:
+  tools: []
+policy:
+  allow_implicit_invocation: true
