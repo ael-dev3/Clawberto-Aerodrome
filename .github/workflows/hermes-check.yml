@@ -1,0 +1,28 @@
+name: Hermes Check
+
+on:
+  push:
+    paths:
+      - "skills/hermes-lp-manager/**"
+      - ".github/workflows/hermes-check.yml"
+  pull_request:
+    paths:
+      - "skills/hermes-lp-manager/**"
+      - ".github/workflows/hermes-check.yml"
+
+jobs:
+  hermes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Unit tests
+        run: python -m unittest discover -s skills/hermes-lp-manager/tests
+      - name: Fixture matrix
+        run: python skills/hermes-lp-manager/scripts/hermes_fixture_matrix.py
+      - name: Heartbeat smoke
+        run: bash skills/hermes-lp-manager/scripts/hermes_contract_smoke.sh
+      - name: Guardrail audit
+        run: bash skills/hermes-lp-manager/scripts/hermes_guardrail_audit.sh
