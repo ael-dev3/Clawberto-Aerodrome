@@ -43,7 +43,7 @@ const CONTRACTS = {
 
 const TICK_SPACING = 200;
 const DESIRED_WIDTH_TICKS = 200;
-const SLIPPAGE_BPS = 500n;
+const SLIPPAGE_BPS = BigInt(process.env.HERMES_SLIPPAGE_BPS || '2000');
 const ETH_GAS_RESERVE_WEI = 1_500_000_000_000_000n; // ~a few USD on Base while leaving room for burst txs.
 const MIN_ETH_SWAP_WEI = 50_000_000_000_000n;
 const MIN_REBALANCE_USD = 0.15;
@@ -421,7 +421,7 @@ async function closeManagedPosition(tokenId, label = `NFT #${tokenId}`) {
     const contains = await stakedContains(tokenId);
     if (!contains) throw new Error(`gauge owns #${tokenId} but depositor membership is false`);
     await simulateAndSend({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'withdraw', args: [BigInt(tokenId)], label: `Withdraw ${label}` });
-    for (let attempt = 1; attempt <= 12; attempt += 1) {
+    for (let attempt = 1; attempt <= 40; attempt += 1) {
       pos = await readPosition(tokenId);
       if (sameAddress(pos.owner, WALLET)) break;
       await sleep(1_500);
@@ -429,6 +429,10 @@ async function closeManagedPosition(tokenId, label = `NFT #${tokenId}`) {
   }
 
   pos = await readPosition(tokenId);
+  if (!sameAddress(pos.owner, WALLET)) {
+    await sleep(5_000);
+    pos = await readPosition(tokenId);
+  }
   if (!sameAddress(pos.owner, WALLET)) throw new Error(`cannot manage #${tokenId}, owner=${pos.owner}`);
 
   if (pos.liquidity > 0n) {
@@ -465,6 +469,26 @@ async function closeManagedPosition(tokenId, label = `NFT #${tokenId}`) {
   return { exited: true, burned };
 }
 
+async function stakeManagedPosition(tokenId, label = `NFT #${tokenId}`) {
+  let pos = await readPosition(tokenId);
+  if (!isManagedPoolPosition(pos)) throw new Error(`position identity mismatch for #${tokenId}`);
+  if (!sameAddress(pos.owner, WALLET)) throw new Error(`cannot stake #${tokenId}, owner=${pos.owner}`);
+  if (pos.liquidity <= 0n) throw new Error(`cannot stake #${tokenId}, zero liquidity`);
+  const pool = await readPool();
+  if (rangeState(pool.currentTick, pos.tickLower, pos.tickUpper) !== 'IN_RANGE') throw new Error(`cannot stake #${tokenId}, out of range at tick ${pool.currentTick}`);
+  await simulateAndSend({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'approve', args: [CONTRACTS.gauge, BigInt(tokenId)], label: `Approve ${label} to gauge` });
+  await simulateAndSend({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'deposit', args: [BigInt(tokenId)], label: `Stake ${label}` });
+  for (let attempt = 1; attempt <= 40; attempt += 1) {
+    const [owner, contains] = await Promise.all([
+      publicClient.readContract({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'ownerOf', args: [BigInt(tokenId)] }),
+      stakedContains(tokenId),
+    ]);
+    if (sameAddress(owner, CONTRACTS.gauge) && contains === true) return { staked: true, tokenId };
+    await sleep(1_500);
+  }
+  throw new Error(`stake verification timed out for #${tokenId}`);
+}
+
 async function cleanupOrphanPositions(exceptTokenId) {
   const pool = await readPool();
   const closed = [];
@@ -472,13 +496,18 @@ async function cleanupOrphanPositions(exceptTokenId) {
     if (tokenId === exceptTokenId) continue;
     const pos = await readPositionMaybe(tokenId);
     if (!isManagedPoolPosition(pos)) continue;
-    const managedByWallet = sameAddress(pos.owner, WALLET) || (sameAddress(pos.owner, CONTRACTS.gauge) && await stakedContains(tokenId));
+    const walletOwned = sameAddress(pos.owner, WALLET);
+    const gaugeOwnedByWallet = sameAddress(pos.owner, CONTRACTS.gauge) && await stakedContains(tokenId);
+    const managedByWallet = walletOwned || gaugeOwnedByWallet;
     if (!managedByWallet) continue;
     const state = rangeState(pool.currentTick, pos.tickLower, pos.tickUpper);
-    const emptyWalletNft = sameAddress(pos.owner, WALLET) && pos.liquidity === 0n && pos.tokensOwed0 === 0n && pos.tokensOwed1 === 0n;
-    if (state !== 'IN_RANGE' || emptyWalletNft) {
+    const emptyWalletNft = walletOwned && pos.liquidity === 0n && pos.tokensOwed0 === 0n && pos.tokensOwed1 === 0n;
+    if (walletOwned && state === 'IN_RANGE' && pos.liquidity > 0n) {
+      await stakeManagedPosition(tokenId, `orphan/in-range NFT #${tokenId}`);
+      closed.push({ tokenId, state, action: 'staked_existing', range: { lowerTick: pos.tickLower, upperTick: pos.tickUpper } });
+    } else if (state !== 'IN_RANGE' || emptyWalletNft) {
       await closeManagedPosition(tokenId, `orphan/out-of-range NFT #${tokenId}`);
-      closed.push({ tokenId, state, range: { lowerTick: pos.tickLower, upperTick: pos.tickUpper } });
+      closed.push({ tokenId, state, action: 'closed', range: { lowerTick: pos.tickLower, upperTick: pos.tickUpper } });
     }
   }
   return closed;
@@ -537,9 +566,9 @@ async function mintAndStake(lowerTick, upperTick) {
     throw new Error(`stale mint range ${lowerTick}-${upperTick} for current tick ${pool.currentTick}`);
   }
   let before = await readBalances();
-  const amount0Desired = before.lfi;
-  const amount1Desired = before.usdc;
-  if (amount0Desired === 0n || amount1Desired === 0n) throw new Error(`insufficient mint inventory lfi=${amount0Desired} usdc=${amount1Desired}`);
+  const amount0Desired = (before.lfi * 999n) / 1000n;
+  const amount1Desired = (before.usdc * 999n) / 1000n;
+  if (amount0Desired === 0n || amount1Desired === 0n) throw new Error(`insufficient mint inventory lfi=${before.lfi} usdc=${before.usdc}`);
 
   await ensureAllowance(CONTRACTS.lfi, CONTRACTS.nftManager, amount0Desired, 'LFI', 'Approve NPM');
   await ensureAllowance(CONTRACTS.usdc, CONTRACTS.nftManager, amount1Desired, 'USDC', 'Approve NPM');
@@ -599,8 +628,16 @@ async function mintAndStake(lowerTick, upperTick) {
     throw error;
   }
 
-  const verifiedOwner = await publicClient.readContract({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'ownerOf', args: [newTokenId] });
-  const verifiedStake = await stakedContains(newTokenId);
+  let verifiedOwner;
+  let verifiedStake;
+  for (let attempt = 1; attempt <= 40; attempt += 1) {
+    [verifiedOwner, verifiedStake] = await Promise.all([
+      publicClient.readContract({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'ownerOf', args: [newTokenId] }),
+      stakedContains(newTokenId),
+    ]);
+    if (sameAddress(verifiedOwner, CONTRACTS.gauge) && verifiedStake === true) break;
+    await sleep(1_500);
+  }
   if (!sameAddress(verifiedOwner, CONTRACTS.gauge) || verifiedStake !== true) throw new Error(`post-stake verification failed owner=${verifiedOwner} staked=${verifiedStake}`);
 
   return { newTokenId, mintHash: hash, used0, used1, simLiquidity, simAmount0, simAmount1 };
