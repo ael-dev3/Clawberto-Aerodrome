@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "defaultsFile": "./references/policy.defaults.json",
+  "strictEntrypoint": "./scripts/hermes_agent.py",
+  "commandSurfaceOwner": "./scripts/hermes_lp_agent.py",
+  "commands": [
+    {
+      "name": "health",
+      "aliases": ["doctor"],
+      "domain": "system",
+      "usage": "health [--json]",
+      "sideEffects": "read-only",
+      "supportsJson": true
+    },
+    {
+      "name": "contracts",
+      "aliases": ["addresses"],
+      "domain": "system",
+      "usage": "contracts [--json]",
+      "sideEffects": "read-only",
+      "supportsJson": true
+    },
+    {
+      "name": "snapshot",
+      "aliases": ["position", "status"],
+      "domain": "position",
+      "usage": "snapshot [--token-id N] [--depositor 0x...] [--out-json PATH]",
+      "sideEffects": "read-only",
+      "supportsJson": true
+    },
+    {
+      "name": "plan",
+      "aliases": ["rebalance-plan", "heartbeat-plan"],
+      "domain": "rebalance",
+      "usage": "plan --snapshot PATH [--mode observe|propose|execute] [--output-mode summary|contract|highlight|raw]",
+      "sideEffects": "read-only-plan",
+      "supportsJson": true
+    },
+    {
+      "name": "heartbeat",
+      "aliases": ["cron", "loop"],
+      "domain": "heartbeat",
+      "usage": "heartbeat [--token-id N] [--depositor 0x...] [--from-snapshot PATH] [--output-mode summary|contract|highlight|raw]",
+      "sideEffects": "read-only-plan",
+      "supportsJson": true
+    },
+    {
+      "name": "execute",
+      "aliases": ["broadcast", "send"],
+      "domain": "execution",
+      "usage": "execute mode is reserved; current Hermes scripts return BLOCKED until a signer adapter is implemented",
+      "sideEffects": "blocked-onchain-write",
+      "supportsJson": true
+    }
+  ]
+}
