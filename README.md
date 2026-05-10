@@ -4,6 +4,12 @@ OpenClaw skill set for deterministic Aerodrome pool intelligence on Base (chain 
 
 This repo now includes a Hermes LP control-plane skill for cron-safe monitoring and guarded planning of the managed Aerodrome Slipstream `CL200-LFI/USDC` position.
 
+## Live LP Dashboard
+
+- Hosted dashboard: https://ael-dev3.github.io/Clawberto-Aerodrome/
+- Shows CL200-LFI/USDC live pool tick, current price, active LP range status, gauge custody, wallet balances, AERO rewards, and LP history.
+- Source of truth for displayed positions: `src/positions.ts`. Every future Aerodrome LP enter/exit must update this registry and redeploy the GitHub Pages site.
+
 ## Scope
 
 - Enumerate Aerodrome pools from on-chain factory registry and voter relationships.
