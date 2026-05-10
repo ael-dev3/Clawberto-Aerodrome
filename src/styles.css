@@ -106,6 +106,34 @@ button {
   text-decoration: none;
 }
 
+[data-tooltip] { cursor: help; }
+
+.app-tooltip {
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  max-width: min(300px, calc(100vw - 16px));
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #111821;
+  color: var(--text);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.38);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  white-space: pre-line;
+  transform: translate3d(0, 0, 0);
+  transition: opacity 120ms ease;
+}
+
+.app-tooltip.is-visible {
+  opacity: 1;
+}
+
 .toplinks i {
   width: 7px;
   height: 7px;
@@ -183,6 +211,10 @@ button {
   border-bottom: 1px solid var(--line);
 }
 
+.wallet-lp-header > div {
+  min-width: 0;
+}
+
 .wallet-lp-header a {
   color: var(--accent);
   font-size: 12px;
@@ -196,12 +228,19 @@ button {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 7px;
+  min-height: 22px;
 }
 
-.wallet-controller-list span {
+.wallet-controller-list.is-empty {
+  visibility: hidden;
+}
+
+.wallet-controller-list span,
+.wallet-controller-list i {
   color: var(--muted);
   font-size: 10px;
   font-weight: 750;
+  font-style: normal;
   text-transform: uppercase;
 }
 
@@ -743,6 +782,11 @@ button {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: color-mix(in srgb, var(--red) var(--heat), var(--surface-2));
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.heatmap-cell:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
 }
 .heatmap-cell.empty {
   background: var(--surface-2);

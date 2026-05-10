@@ -42,6 +42,7 @@ function failMissingRoot(): never {
 }
 
 let refreshTimer: number | undefined;
+let tooltipNode: HTMLDivElement | undefined;
 
 function isWalletRangeState(value: unknown): value is WalletRangeState {
   return value === 'inRange' || value === 'outOfRange' || value === 'noPosition';
@@ -93,6 +94,65 @@ function persistUptime(): void {
   } catch {
     // localStorage can be unavailable in restrictive browser contexts; the in-memory counters still work.
   }
+}
+
+function getTooltipNode(): HTMLDivElement {
+  if (tooltipNode) return tooltipNode;
+  const node = document.createElement('div');
+  node.className = 'app-tooltip';
+  node.setAttribute('role', 'tooltip');
+  document.body.appendChild(node);
+  tooltipNode = node;
+  return node;
+}
+
+function positionTooltip(clientX: number, clientY: number): void {
+  if (!tooltipNode) return;
+  const margin = 12;
+  const bounds = tooltipNode.getBoundingClientRect();
+  const x = Math.min(window.innerWidth - bounds.width - 8, Math.max(8, clientX + margin));
+  const preferredTop = clientY - bounds.height - margin;
+  const y = preferredTop >= 8
+    ? preferredTop
+    : Math.min(window.innerHeight - bounds.height - 8, clientY + margin);
+  tooltipNode.style.left = `${x}px`;
+  tooltipNode.style.top = `${y}px`;
+}
+
+function showTooltip(target: HTMLElement, clientX: number, clientY: number): void {
+  const text = target.dataset.tooltip;
+  if (!text) return;
+  const node = getTooltipNode();
+  node.textContent = text;
+  node.classList.add('is-visible');
+  positionTooltip(clientX, clientY);
+}
+
+function hideTooltip(): void {
+  tooltipNode?.classList.remove('is-visible');
+}
+
+function installTooltips(): void {
+  document.addEventListener('pointerover', (event) => {
+    const target = (event.target as Element | null)?.closest<HTMLElement>('[data-tooltip]');
+    if (!target) return;
+    showTooltip(target, event.clientX, event.clientY);
+  });
+  document.addEventListener('pointermove', (event) => {
+    if (tooltipNode?.classList.contains('is-visible')) positionTooltip(event.clientX, event.clientY);
+  });
+  document.addEventListener('pointerout', (event) => {
+    const target = (event.target as Element | null)?.closest<HTMLElement>('[data-tooltip]');
+    if (!target || (event.relatedTarget instanceof Node && target.contains(event.relatedTarget))) return;
+    hideTooltip();
+  });
+  document.addEventListener('focusin', (event) => {
+    const target = (event.target as Element | null)?.closest<HTMLElement>('[data-tooltip]');
+    if (!target) return;
+    const bounds = target.getBoundingClientRect();
+    showTooltip(target, bounds.left + bounds.width / 2, bounds.top);
+  });
+  document.addEventListener('focusout', hideTooltip);
 }
 
 function addressLink(address: string): string {
@@ -281,11 +341,14 @@ function stakedTvlUsd(snapshot: DashboardSnapshot): number | undefined {
 
 function walletLinkList(wallet: TrackedWalletSnapshot): string {
   const addresses = trackedPositionAddresses(wallet);
-  if (addresses.length <= 1) return '';
+  const controllers = addresses.slice(1);
+  const empty = controllers.length === 0;
   return `
-    <div class="wallet-controller-list">
+    <div class="wallet-controller-list${empty ? ' is-empty' : ''}"${empty ? ' aria-hidden="true"' : ''}>
       <span>LP controllers</span>
-      ${addresses.slice(1).map((address) => `<a href="${addressLink(address)}" target="_blank" rel="noreferrer">${compactAddress(address)}</a>`).join('')}
+      ${empty
+        ? ''
+        : controllers.map((address) => `<a href="${addressLink(address)}" target="_blank" rel="noreferrer">${compactAddress(address)}</a>`).join('')}
     </div>
   `;
 }
@@ -654,4 +717,5 @@ async function refresh(): Promise<void> {
 }
 
 renderLoading();
+installTooltips();
 void refresh();

@@ -81,6 +81,14 @@ function scoreFormat(value: number): string {
   return numberFormat(value, 1);
 }
 
+function escapeAttribute(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
 function pctClass(value: number | undefined): string {
   if (value === undefined || !Number.isFinite(value) || value === 0) return 'flat';
   return value > 0 ? 'positive' : 'negative';
@@ -361,15 +369,19 @@ function renderVolatilityHeatmap(candles: GeckoCandle[]): string {
                 .filter((cell) => cell.dayIndex === dayIndex)
                 .map((cell) => {
                   const label = `${cell.dayLabel} ${String(cell.hour).padStart(2, '0')}:00 UTC`;
-                  const title = cell.sampleCount > 0
+                  const sampleText = `${cell.sampleCount} sample${cell.sampleCount === 1 ? '' : 's'}`;
+                  const tooltip = cell.sampleCount > 0
+                    ? `${label}\n${percentFormat(cell.volatilityPct, 2)} average hourly volatility\n${sampleText}${cell.isCurrent ? '\nCurrent slot' : ''}`
+                    : `${label}\nNo candle samples yet`;
+                  const ariaLabel = cell.sampleCount > 0
                     ? `${label}: ${percentFormat(cell.volatilityPct, 2)} average hourly volatility from ${cell.sampleCount} sample${cell.sampleCount === 1 ? '' : 's'}`
                     : `${label}: no sample`;
                   return `
                     <span
                       class="heatmap-cell${cell.isCurrent ? ' current' : ''}${cell.sampleCount === 0 ? ' empty' : ''}"
                       style="--heat: ${(cell.normalized * 100).toFixed(0)}%;"
-                      title="${title}"
-                      aria-label="${title}"
+                      data-tooltip="${escapeAttribute(tooltip)}"
+                      aria-label="${escapeAttribute(ariaLabel)}"
                     ></span>
                   `;
                 }).join('')}
