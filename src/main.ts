@@ -11,7 +11,7 @@ import {
   tickLabel,
   tickToAdjustedPrice,
 } from './aero-math';
-import { realizedVolatilityPct } from './analytics';
+import { HISTORICAL_HOURLY_CANDLE_LIMIT, realizedVolatilityPct } from './analytics';
 import { COMPARISON_WALLET_ADDRESS, CONTRACTS, WALLET_ADDRESS } from './config';
 import { DASHBOARD_SECTION_ORDER, type DashboardSectionId } from './dashboard-layout';
 import { renderBottomAnalytics } from './bottom-analytics';
@@ -474,7 +474,7 @@ async function refresh(): Promise<void> {
   try {
     const [snapshot, historicalCandles] = await Promise.all([
       loadDashboardSnapshot(),
-      fetchGeckoPoolOhlcv({ poolAddress: CONTRACTS.pool, timeframe: 'hour', aggregate: 1, limit: 49 }).catch(() => []),
+      fetchGeckoPoolOhlcv({ poolAddress: CONTRACTS.pool, timeframe: 'hour', aggregate: 1, limit: HISTORICAL_HOURLY_CANDLE_LIMIT }).catch(() => []),
     ]);
     renderDashboard(snapshot, historicalCandles);
   } catch (error) {

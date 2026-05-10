@@ -812,6 +812,86 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
+.heatmap-card {
+  overflow: hidden;
+}
+.heatmap-shell {
+  display: grid;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.heatmap-hour-axis,
+.heatmap-row {
+  display: grid;
+  grid-template-columns: 42px minmax(520px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.heatmap-hour-axis > div,
+.heatmap-cells {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(14px, 1fr));
+  gap: 3px;
+  min-width: 520px;
+}
+.heatmap-hour-axis span {
+  color: var(--subtle);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1;
+  text-align: center;
+}
+.heatmap-day {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.heatmap-cell {
+  display: block;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--red) var(--heat), var(--surface-2));
+}
+.heatmap-cell.empty {
+  background: var(--surface-2);
+  opacity: 0.45;
+}
+.heatmap-cell.current {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.heatmap-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.heatmap-footer b {
+  color: var(--text);
+}
+.heatmap-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.heatmap-legend i,
+.heatmap-legend em {
+  width: 18px;
+  height: 10px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.heatmap-legend i { background: color-mix(in srgb, var(--red) 10%, var(--surface-2)); }
+.heatmap-legend em { background: color-mix(in srgb, var(--red) 90%, var(--surface-2)); }
 .positive { color: var(--green); }
 .negative { color: var(--red); }
 .flat { color: var(--muted); }
@@ -875,7 +955,10 @@ button {
   .wallet-balances { justify-content: flex-start; }
   .toplinks { width: 100%; }
   .toplinks a,
-  .toplinks span { min-width: 0; }
+  .toplinks span {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
   .head-metrics,
   .wallet-balances {
     align-items: flex-start;
@@ -902,6 +985,18 @@ button {
   .split-line strong,
   .split-total strong { text-align: left; }
   .analytics-price { width: 100%; text-align: left; }
+  .heatmap-hour-axis,
+  .heatmap-row {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 6px;
+  }
+  .heatmap-hour-axis > div,
+  .heatmap-cells {
+    min-width: 0;
+    gap: 2px;
+  }
+  .heatmap-hour-axis span { font-size: 9px; }
+  .heatmap-cell { height: 12px; border-radius: 3px; }
   .lp-price-chart,
   .chart-state,
   .chart-viewport,

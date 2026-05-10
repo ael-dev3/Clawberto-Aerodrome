@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { priceWindowChanges, realizedVolatilityPct, suggestedLpRangeFromCandles } from '../src/analytics';
+import { priceWindowChanges, realizedVolatilityPct, suggestedLpRangeFromCandles, volatilityHeatmap } from '../src/analytics';
 import { tickToAdjustedPrice } from '../src/aero-math';
 import { normalizeGeckoOhlcv } from '../src/gecko';
 import { buildRangeOverlays } from '../src/lp-range-overlays';
@@ -88,6 +88,72 @@ describe('LFI analytics windows', () => {
 
     expect(highEmission.totalWidthPct).toBeLessThan(baseline.totalWidthPct);
     expect(highEmission.emissionTighteningPct).toBeGreaterThan(0);
+  });
+
+  it('builds a weekday-hour volatility heatmap from hourly candles', () => {
+    const start = Date.UTC(2026, 0, 4, 0, 0, 0) / 1_000;
+    let close = 100;
+    const heatCandles = Array.from({ length: 14 * 24 }, (_, index) => {
+      const time = start + index * 3_600;
+      const date = new Date(time * 1_000);
+      const isHighVolatilitySlot = date.getUTCDay() === 6 && date.getUTCHours() === 23;
+      const open = close;
+      close *= isHighVolatilitySlot ? 1.08 : 1.001;
+      return {
+        time,
+        open,
+        high: Math.max(open, close) * (isHighVolatilitySlot ? 1.03 : 1.0005),
+        low: Math.min(open, close) * (isHighVolatilitySlot ? 0.97 : 0.9995),
+        close,
+        volume: 1_000,
+      };
+    });
+
+    const heatmap = volatilityHeatmap(heatCandles);
+
+    expect(heatmap.cells).toHaveLength(168);
+    expect(heatmap.sampleCount).toBe(14 * 24 - 1);
+    expect(heatmap.currentCell?.dayLabel).toBe('Sat');
+    expect(heatmap.currentCell?.hour).toBe(23);
+    expect(heatmap.currentRegimeMultiplier).toBeGreaterThan(1.2);
+  });
+
+  it('widens the suggested LP range during historically hot weekday-hour regimes', () => {
+    const currentTick = -365_879;
+    const basePrice = tickToAdjustedPrice(currentTick, 18, 6);
+    const volatileCandles = Array.from({ length: 72 }, (_, index) => {
+      const drift = Math.sin(index / 2) * 0.05;
+      const close = basePrice * (1 + drift);
+      return {
+        time: 1_700_000_000 + index * 3_600,
+        open: close,
+        high: close * 1.015,
+        low: close * 0.985,
+        close,
+        volume: 1_000,
+      };
+    });
+    const baseline = suggestedLpRangeFromCandles({
+      candles: volatileCandles,
+      currentTick,
+      tickSpacing: 200,
+      token0Decimals: 18,
+      token1Decimals: 6,
+      emissionAprPct: 0,
+      heatmapRegimeMultiplier: 1,
+    });
+    const hotRegime = suggestedLpRangeFromCandles({
+      candles: volatileCandles,
+      currentTick,
+      tickSpacing: 200,
+      token0Decimals: 18,
+      token1Decimals: 6,
+      emissionAprPct: 0,
+      heatmapRegimeMultiplier: 1.6,
+    });
+
+    expect(hotRegime.totalWidthPct).toBeGreaterThan(baseline.totalWidthPct);
+    expect(hotRegime.heatmapRegimeMultiplier).toBe(1.6);
   });
 });
 

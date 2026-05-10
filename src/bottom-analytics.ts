@@ -8,10 +8,13 @@ import {
   tickLabel,
 } from './aero-math';
 import {
+  HISTORICAL_HOURLY_CANDLE_LIMIT,
   PRICE_CHANGE_WINDOWS,
+  VOLATILITY_HEATMAP_DAYS,
   priceWindowChanges,
   realizedVolatilityPct,
   suggestedLpRangeFromCandles,
+  volatilityHeatmap,
 } from './analytics';
 import { CONTRACTS } from './config';
 import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
@@ -278,6 +281,7 @@ function renderPoolComposition(snapshot: DashboardSnapshot): string {
 function renderRangeSuggestion(snapshot: DashboardSnapshot, candles: GeckoCandle[]): string {
   const primary = snapshot.positions.find((position) => !position.liveError && position.tickSpacing !== undefined);
   const emissionAprPct = currentEmissionAprPct(snapshot);
+  const heatmap = volatilityHeatmap(candles);
   const suggestion = suggestedLpRangeFromCandles({
     candles,
     currentTick: snapshot.pool.currentTick,
@@ -285,7 +289,11 @@ function renderRangeSuggestion(snapshot: DashboardSnapshot, candles: GeckoCandle
     token0Decimals: 18,
     token1Decimals: 6,
     emissionAprPct,
+    heatmapRegimeMultiplier: heatmap.currentRegimeMultiplier,
   });
+  const currentHeatmapVol = heatmap.currentCell && heatmap.currentCell.sampleCount > 0
+    ? percentFormat(heatmap.currentCell.volatilityPct, 2)
+    : 'n/a';
   return `
     <section class="analytics-card">
       <header>
@@ -301,8 +309,66 @@ function renderRangeSuggestion(snapshot: DashboardSnapshot, candles: GeckoCandle
         <span>Width each side <b>${percentFormat(suggestion.halfWidthPct, 1)}</b></span>
         <span>24h realized volatility <b>${percentFormat(suggestion.realizedVolatilityPct, 2)}</b></span>
         <span>48h observed move <b>${percentFormat(suggestion.observedMovePct, 2)}</b></span>
+        <span>Weekday/hour volatility regime <b>${heatmap.sampleCount > 0 ? `${numberFormat(suggestion.heatmapRegimeMultiplier, 2)}x` : 'n/a'}</b></span>
+        <span>Current heatmap volatility <b>${currentHeatmapVol}</b></span>
         <span>Emission APR input <b>${suggestion.emissionAprPct === undefined ? 'n/a' : percentFormat(suggestion.emissionAprPct, 2)}</b></span>
         <span>Emission width adjustment <b>-${percentFormat(suggestion.emissionTighteningPct, 1)}</b></span>
+      </div>
+    </section>
+  `;
+}
+
+function renderVolatilityHeatmap(candles: GeckoCandle[]): string {
+  const heatmap = volatilityHeatmap(candles);
+  const hourLabels = Array.from({ length: 24 }, (_, hour) => `
+    <span>${hour % 6 === 0 ? String(hour).padStart(2, '0') : ''}</span>
+  `).join('');
+  const currentCell = heatmap.currentCell && heatmap.currentCell.sampleCount > 0
+    ? `${heatmap.currentCell.dayLabel} ${String(heatmap.currentCell.hour).padStart(2, '0')}:00 UTC`
+    : 'waiting for history';
+  const subtitle = heatmap.sampleCount > 0
+    ? `${numberFormat(heatmap.currentRegimeMultiplier, 2)}x current regime / ${numberFormat(heatmap.sampleCount, 0)} samples`
+    : 'waiting for hourly candles';
+
+  return `
+    <section class="analytics-card analytics-wide heatmap-card">
+      <header>
+        <span>LFI volatility heatmap</span>
+        <strong>${subtitle}</strong>
+      </header>
+      <div class="heatmap-shell" role="img" aria-label="LFI hourly volatility heatmap by UTC weekday and hour">
+        <div class="heatmap-hour-axis" aria-hidden="true">
+          <span></span>
+          <div>${hourLabels}</div>
+        </div>
+        ${VOLATILITY_HEATMAP_DAYS.map((dayLabel, dayIndex) => `
+          <div class="heatmap-row">
+            <span class="heatmap-day">${dayLabel}</span>
+            <div class="heatmap-cells">
+              ${heatmap.cells
+                .filter((cell) => cell.dayIndex === dayIndex)
+                .map((cell) => {
+                  const label = `${cell.dayLabel} ${String(cell.hour).padStart(2, '0')}:00 UTC`;
+                  const title = cell.sampleCount > 0
+                    ? `${label}: ${percentFormat(cell.volatilityPct, 2)} average hourly volatility from ${cell.sampleCount} sample${cell.sampleCount === 1 ? '' : 's'}`
+                    : `${label}: no sample`;
+                  return `
+                    <span
+                      class="heatmap-cell${cell.isCurrent ? ' current' : ''}${cell.sampleCount === 0 ? ' empty' : ''}"
+                      style="--heat: ${(cell.normalized * 100).toFixed(0)}%;"
+                      title="${title}"
+                      aria-label="${title}"
+                    ></span>
+                  `;
+                }).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="heatmap-footer">
+        <span>Current slot <b>${currentCell}</b></span>
+        <span>Average hourly volatility <b>${percentFormat(heatmap.averageVolatilityPct, 2)}</b></span>
+        <span class="heatmap-legend"><i></i><b>Low</b><em></em><b>High</b></span>
       </div>
     </section>
   `;
@@ -388,6 +454,7 @@ function renderContent(snapshot: DashboardSnapshot, managedCandles: GeckoCandle[
       ${renderPoolComposition(snapshot)}
       ${renderRangeSuggestion(snapshot, candlesForLp)}
       ${renderProfitability(agent, human)}
+      ${renderVolatilityHeatmap(candlesForLp)}
     </div>
   `;
 }
@@ -403,7 +470,7 @@ export async function renderBottomAnalytics(snapshot: DashboardSnapshot, mount: 
   const [managed, reference] = await Promise.allSettled([
     preloadedManagedCandles.length > 0
       ? Promise.resolve(preloadedManagedCandles)
-      : fetchGeckoPoolOhlcv({ poolAddress: CONTRACTS.pool, timeframe: 'hour', aggregate: 1, limit: 49 }),
+      : fetchGeckoPoolOhlcv({ poolAddress: CONTRACTS.pool, timeframe: 'hour', aggregate: 1, limit: HISTORICAL_HOURLY_CANDLE_LIMIT }),
     fetchGeckoPoolOhlcv({ poolAddress: CONTRACTS.lfiReferencePool, timeframe: 'hour', aggregate: 1, limit: 49 }),
   ]);
   const managedCandles = managed.status === 'fulfilled' ? managed.value : [];
