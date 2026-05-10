@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "defaults": {
+    "policy": {
+      "mode": "propose",
+      "slippageBps": 100,
+      "deadlineSeconds": 900,
+      "rebalanceRequiresDepositor": true,
+      "executionRequiresAdapter": true
+    },
+    "heartbeat": {
+      "intervalSeconds": 1800,
+      "minHeadroomTicks": 400,
+      "minHeadroomPct": 0.15,
+      "minEarnedAeroWei": "0",
+      "outputMode": "highlight"
+    },
+    "position": {
+      "managedTokenId": 341002,
+      "tickSpacing": 200,
+      "replacementWidthTicks": 2400
+    },
+    "validation": {
+      "requiredModes": ["summary", "contract", "highlight", "raw"],
+      "requireFullAddresses": true
+    }
+  }
+}
