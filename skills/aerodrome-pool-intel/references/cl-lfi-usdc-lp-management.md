@@ -244,7 +244,7 @@ Observed failure mode from the aggressive 30s one-tick run:
 
 - The dashboard tracked burned NFT `#345395` while several failed one-cron leftovers were still wallet-owned and unstaked.
 - Wallet-owned out-of-range leftovers found and closed: `#345349`, `#345384`, `#345412`; additional orphan discovered from one-cron logs/state and closed: `#345174`.
-- New active position after remediation: NFT `#346034`, range `-365200 → -365000`, staked in gauge and verified with `ownerOf(346034) == gauge` plus `stakedContains(wallet, 346034) == true`. Earlier recovered NFT `#345949` was also closed once it drifted out of range before final reentry.
+- Final active position after repair: NFT `#346303`, range `-364600 → -364400`, staked in gauge and verified with `ownerOf(346303) == gauge` plus `stakedContains(wallet, 346303) == true`. Earlier recovered NFTs `#345949`, `#346034`, `#346123`, and `#346152` were closed or compacted into the final band.
 
 Workflow rules added from this incident:
 
@@ -254,8 +254,11 @@ Workflow rules added from this incident:
 4. For wallet-owned out-of-range leftovers with `tokensOwed0 == tokensOwed1 == 0`, the successful close path was `decreaseLiquidity -> collect -> burn`; collect-first is still valid when owed fees are already nonzero, but a collect-only tx can waste gas if there is nothing currently owed.
 5. Use a churn brake: keep the scheduler at 30s if requested, but set `HERMES_REBALANCE_COOLDOWN_SECONDS` so range drift does not continuously burn gas. Stake remediation and orphan cleanup bypass the churn cooldown.
 6. Reject dust mints with `HERMES_MIN_POSITION_USD`; otherwise a drained wallet can mint microscopic positions that cannot justify gas.
-7. A verified on-chain LP change is not complete until `src/positions.ts` is updated, tests/build pass, the commit is pushed, Pages deploys, and the live dashboard renders the new state.
-
+7. If a recovered wallet-owned NFT is still in range and has liquidity, stake it instead of leaving it as an unstaked active-range orphan; then display it on the dashboard.
+8. Mint with a small ERC-20 balance haircut instead of exact full wallet balances; exact-full-balance mints can revert `STF` after volatile swaps even when allowance looks sufficient.
+9. For volatile LFI/USDC balance swaps, expose `HERMES_SLIPPAGE_BPS`; 5% was too tight during the live repair, while 20% let the retry proceed.
+10. A verified on-chain LP change is not complete until `src/positions.ts` is updated, tests/build pass, the commit is pushed, Pages deploys, and the live dashboard renders the new state.
+11. If GitHub push is rejected because remote moved, resolve the rebase before reporting completion. On-chain success with an unpushed dashboard is incomplete.
 ## Hard failure rules
 
 - Do not operate from truncated addresses.
