@@ -502,6 +502,8 @@ async function mintAndStake(lowerTick, upperTick) {
   const transferLogs = parseEventLogs({ abi: nftManagerAbi, logs: receipt.logs, eventName: 'Transfer', strict: false });
   const mintLog = transferLogs.find((log) => sameAddress(log.args.from, ZERO) && sameAddress(log.args.to, WALLET));
   const newTokenId = mintLog?.args?.tokenId ?? simTokenId;
+  const mintTx = txs.find((tx) => tx.hash === hash);
+  if (mintTx) mintTx.label = `Mint one-tick NFT #${newTokenId}`;
 
   const afterMint = await readBalances();
   const used0 = before.lfi - afterMint.lfi;
@@ -558,13 +560,23 @@ function commitAndPush(newTokenId) {
   }
   const sha = run('git rev-parse HEAD').trim();
   let runId;
-  try {
-    const json = run(`gh run list --repo ${OWNER_REPO} --limit 1 --json databaseId,headSha,status,workflowName`);
-    const [latest] = JSON.parse(json);
-    if (latest?.headSha === sha) runId = latest.databaseId;
-    if (runId) run(`gh run watch ${runId} --repo ${OWNER_REPO} --exit-status`, { stdio: 'inherit' });
-  } catch (error) {
-    console.log(`Pages watch skipped: ${error instanceof Error ? error.message : String(error)}`);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      const json = run(`gh run list --repo ${OWNER_REPO} --limit 5 --json databaseId,headSha,status,workflowName`);
+      const match = JSON.parse(json).find((candidate) => candidate?.headSha === sha && candidate?.workflowName === 'Deploy GitHub Pages');
+      if (match?.databaseId) {
+        runId = match.databaseId;
+        break;
+      }
+    } catch (error) {
+      console.log(`Pages run lookup attempt ${attempt + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    run('sleep 3');
+  }
+  if (runId) {
+    run(`gh run watch ${runId} --repo ${OWNER_REPO} --exit-status`, { stdio: 'inherit' });
+  } else {
+    console.log(`Pages watch skipped: no run found for ${sha}`);
   }
   const http = run(`curl -sS -L -o /tmp/clawberto-aerodrome-cron.html -w '%{http_code}' ${LIVE_URL}`).trim();
   if (http !== '200') throw new Error(`live dashboard HTTP ${http}`);

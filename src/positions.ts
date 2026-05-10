@@ -47,7 +47,7 @@ export const managedPositions: ManagedPositionRecord[] = [
       { label: 'Balance LFI to USDC', hash: '0x2fdf15ebe661eb3ec82eaddb93e120baa69b8917a1603178eb4c9fb5120fcd52' },
       { label: 'Approve NPM LFI', hash: '0x37bc34602253b6af06d31dbd1868b4c62cb4ee9e8f9753f8f0ea1d26a536f653' },
       { label: 'Approve NPM USDC', hash: '0xbe6d8676b805a4bba7c29e56e885cc6bf32263fad86be6bceac9a4ac1eb2a721' },
-      { label: 'Mint one-tick NFT sim#344802', hash: '0xbc7e601985a3b3b85d8d990f75e76b8e3d2978b7c8ad4cc3cf02fd3c92f4a1a4' },
+      { label: 'Mint one-tick NFT #344803', hash: '0xbc7e601985a3b3b85d8d990f75e76b8e3d2978b7c8ad4cc3cf02fd3c92f4a1a4' },
       { label: 'Approve NFT #344803 to gauge', hash: '0xa3bdd2ef6a63a5e6e654a9091c4ebc3a6acea4c6cb760a2c36034963bb18c0f4' },
       { label: 'Stake NFT #344803', hash: '0x0219b121aeb632269a9510bb4b4e11311ccb026894769b2bd06540924bd1bdf6' },
     ],

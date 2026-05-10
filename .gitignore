@@ -15,6 +15,7 @@ runs/*/*.json
 runs/*/*.csv
 runs/*/*.txt
 runs/*/*.tmp
+runs/*/*.lock
 
 # OS files
 .DS_Store
