@@ -25,8 +25,8 @@ export interface ManagedPositionRecord {
 
 export const managedPositions: ManagedPositionRecord[] = [
   {
-    tokenId: 346478n,
-    label: 'Hermes CL200 one-tick band',
+    tokenId: 346537n,
+    label: 'Clawberto CL200 wallet-held band',
     origin: 'hermes-managed',
     pair: 'LFI/USDC',
     pool: CONTRACTS.pool,
@@ -34,17 +34,10 @@ export const managedPositions: ManagedPositionRecord[] = [
     nftManager: CONTRACTS.nftManager,
     depositor: WALLET_ADDRESS,
     enteredAt: '2026-05-10',
-    intendedRange: 'One CL200 tick, -364200 to -364000, rebalanced from tick -364153',
-    notes: 'Rebalanced by the Hermes one-cron Aerodrome executor into the active one-tick band and staked into the Aerodrome gauge.',
-    deposited: {
-      lfiRaw: 56319598745364612426853n,
-      usdcRaw: 2709184n,
-    },
+    intendedRange: 'One CL200 tick, -364400 to -364200, live wallet-held position',
+    notes: 'Live Base RPC shows this as the current positive-liquidity LFI/USDC NFT owned by the Clawberto wallet. It is not gauge-staked, so the dashboard does not assign emissions APR or pending AERO.',
     setupTxs: [
-      { label: 'Balance USDC to LFI', hash: '0x06f7aeb12fb4f3dd914b16b2e4cd813c4f6a9af0879c4bf7526a21a06c7c2ebd' },
-      { label: 'Mint one-tick NFT #346478', hash: '0xcf48690da24bfb0435e27e448bde68aabebfbd772f72d18d479ddb8f4b6e2454' },
-      { label: 'Approve NFT #346478 to gauge', hash: '0x9bf236830e5e7ac9f9b7110df59722d0a124f547c0e14bcdd4cbc7e153868fff' },
-      { label: 'Stake NFT #346478', hash: '0xacf627f833ebf405f3a90c5f3b6cc0bd8d0dc5ae3e02c57ad803592d09350581' },
+      { label: 'Mint wallet-held NFT #346537', hash: '0x579b90e03c8236d723321e032f81fc004f0d282a7de92f3aad268bd45fd6cb02' },
     ],
   },
 ];

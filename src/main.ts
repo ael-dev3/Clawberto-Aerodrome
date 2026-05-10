@@ -18,8 +18,7 @@ import { renderBottomAnalytics } from './bottom-analytics';
 import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
 import { renderLpRangeChart } from './lp-range-chart';
 import { positionValuation, walletUsdValue } from './position-valuation';
-import { positionHistory } from './positions';
-import { loadDashboardSnapshot, type DashboardSnapshot, type TrackedWalletSnapshot } from './rpc';
+import { loadDashboardSnapshot, type DashboardSnapshot, type LivePosition, type TrackedWalletSnapshot } from './rpc';
 
 const REFRESH_MS = 15_000;
 const UPTIME_STORAGE_KEY = 'clawberto-range-uptime-v1';
@@ -90,10 +89,6 @@ function persistUptime(): void {
   } catch {
     // localStorage can be unavailable in restrictive browser contexts; the in-memory counters still work.
   }
-}
-
-function txLink(hash: `0x${string}`): string {
-  return `https://basescan.org/tx/${hash}`;
 }
 
 function addressLink(address: string): string {
@@ -200,6 +195,32 @@ function walletChartId(wallet: TrackedWalletSnapshot, index: number): string {
   return `lp-price-chart-${wallet.role.replace(/[^a-z0-9_-]/gi, '').toLowerCase() || index}`;
 }
 
+function positionCustodyLabel(position: LivePosition, wallet?: TrackedWalletSnapshot): string {
+  if (position.staked) return 'gauge-staked';
+  if (wallet && position.owner?.toLowerCase() === wallet.address.toLowerCase()) return 'wallet-held';
+  if (position.owner) return 'external custody';
+  return 'custody unknown';
+}
+
+function custodySummary(positions: LivePosition[], wallet: TrackedWalletSnapshot): string {
+  if (positions.length === 0) return 'no active LP';
+  const staked = positions.filter((position) => position.staked).length;
+  const walletHeld = positions.filter((position) => !position.staked && position.owner?.toLowerCase() === wallet.address.toLowerCase()).length;
+  const external = positions.length - staked - walletHeld;
+  return [
+    staked > 0 ? `${staked} staked` : '',
+    walletHeld > 0 ? `${walletHeld} wallet-held` : '',
+    external > 0 ? `${external} external` : '',
+  ].filter(Boolean).join(' / ');
+}
+
+function aprBreakdown(summary: { feeAprPct?: number; emissionAprPct?: number }, positions: LivePosition[]): string {
+  if (positions.length === 0) return 'no active LP';
+  const fee = summary.feeAprPct === undefined ? 'fees n/a' : `fees ${percentFormat(summary.feeAprPct, 2)}`;
+  const emissions = summary.emissionAprPct === undefined ? 'emissions n/a' : `emissions ${percentFormat(summary.emissionAprPct, 2)}`;
+  return `${fee} / ${emissions}`;
+}
+
 function walletLpSummary(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot, volatilityPct: number) {
   const positions = trackedWalletPositions(snapshot, wallet)
     .filter((position) => position.liquidity !== undefined && position.liquidity > 0n);
@@ -257,6 +278,8 @@ function walletLpSummary(snapshot: DashboardSnapshot, wallet: TrackedWalletSnaps
     lpUsd,
     pendingAero,
     pendingAeroUsd,
+    emissionAprPct: emissionApr,
+    feeAprPct: feeApr,
     aprPct: emissionApr !== undefined || feeApr !== undefined ? (emissionApr ?? 0) + (feeApr ?? 0) : undefined,
     index,
     rangeState,
@@ -340,9 +363,9 @@ function renderWalletLpPanel(snapshot: DashboardSnapshot, wallet: TrackedWalletS
       </header>
       <div class="wallet-kpi-grid">
         <div><span>Profitability</span><strong>${scoreFormat(summary.index)}</strong><small>history-based index</small></div>
-        <div><span>Active LP</span><strong>${formatUsd(summary.lpUsd)}</strong><small>${summary.positions.length} NFT${summary.positions.length === 1 ? '' : 's'}</small></div>
-        <div><span>APR</span><strong>${summary.aprPct === undefined ? 'n/a' : percentFormat(summary.aprPct, 2)}</strong><small>fees + staked emissions</small></div>
-        <div><span>Pending</span><strong>${formatTokenAmount(summary.pendingAero, 18, 4)} AERO</strong><small>${formatUsd(summary.pendingAeroUsd)}</small></div>
+        <div><span>Active LP</span><strong>${formatUsd(summary.lpUsd)}</strong><small>${summary.positions.length} NFT${summary.positions.length === 1 ? '' : 's'} / ${custodySummary(summary.positions, wallet)}</small></div>
+        <div><span>APR</span><strong>${summary.aprPct === undefined ? 'n/a' : percentFormat(summary.aprPct, 2)}</strong><small>${aprBreakdown(summary, summary.positions)}</small></div>
+        <div><span>Pending</span><strong>${formatTokenAmount(summary.pendingAero, 18, 4)} AERO</strong><small>${summary.positions.length === 0 ? 'no active LP' : summary.positions.some((position) => position.staked) ? formatUsd(summary.pendingAeroUsd) : 'not gauge-staked'}</small></div>
         <div><span>LP split</span><strong>${sideSplit}</strong><small>${rangeHeadroom}</small></div>
         <div><span>Wallet</span><strong>${formatUsd(walletUsd)}</strong><small>${formatTokenAmount(wallet.balances.lfi, 18, 2)} LFI</small></div>
       </div>
@@ -379,16 +402,27 @@ function renderRangeConsole(snapshot: DashboardSnapshot, historicalCandles: Geck
 
 function renderDiagnostics(snapshot: DashboardSnapshot): string {
   const stakedRatio = snapshot.pool.liquidity > 0n ? (Number(snapshot.pool.stakedLiquidity) / Number(snapshot.pool.liquidity)) * 100 : 0;
-  const issuePositions = snapshot.positions.filter((position) => position.liveError);
-  const issueRows = issuePositions.map((position) => `
-          <div class="timeline-row diagnostic-row">
-            <span>Live read</span>
+  const positionRows = snapshot.positions.map((position) => {
+    const wallet = snapshot.trackedWallets.find((item) =>
+      item.address.toLowerCase() === position.depositor?.toLowerCase() ||
+      item.address.toLowerCase() === position.owner?.toLowerCase(),
+    );
+    const status = position.tickLower !== undefined && position.tickUpper !== undefined
+      ? rangeStatus(snapshot.pool.currentTick, position.tickLower, position.tickUpper).state.replaceAll('_', ' ')
+      : 'range unknown';
+    const range = position.tickLower !== undefined && position.tickUpper !== undefined
+      ? `${tickLabel(position.tickLower)} to ${tickLabel(position.tickUpper)}`
+      : 'range unknown';
+    return `
+          <div class="timeline-row">
+            <span>NFT #${position.tokenId.toString()}</span>
             <div>
-              <strong>#${position.tokenId.toString()} / ${position.label}</strong>
-              <p>${position.liveError}</p>
+              <strong>${wallet?.shortLabel ?? 'Tracked wallet'} / ${positionCustodyLabel(position, wallet)}</strong>
+              <p>${status} / ${range} / liquidity ${compactNumber(position.liquidity)}</p>
             </div>
           </div>
-        `).join('');
+        `;
+  }).join('');
   const walletRows = snapshot.trackedWallets.map((wallet) => `
           <div class="timeline-row">
             <span>${wallet.shortLabel}</span>
@@ -401,7 +435,7 @@ function renderDiagnostics(snapshot: DashboardSnapshot): string {
   return `
     <details class="panel history-panel diagnostics-panel" data-section="diagnostics-secondary">
       <summary>
-        <span><b>Diagnostics</b><em>Pool liquidity ${compactNumber(snapshot.pool.liquidity)} / staked ${percentFormat(stakedRatio, 1)} / discovery ${snapshot.positionDiscovery.discoveredRecords} live candidate${snapshot.positionDiscovery.discoveredRecords === 1 ? '' : 's'}${issuePositions.length ? ` / ${issuePositions.length} read issue${issuePositions.length === 1 ? '' : 's'}` : ''}</em></span>
+        <span><b>Diagnostics</b><em>Pool liquidity ${compactNumber(snapshot.pool.liquidity)} / staked ${percentFormat(stakedRatio, 1)} / ${snapshot.positions.length} verified LFI/USDC LP${snapshot.positions.length === 1 ? '' : 's'}</em></span>
         <strong>Open details</strong>
       </summary>
       <div class="timeline">
@@ -420,17 +454,7 @@ function renderDiagnostics(snapshot: DashboardSnapshot): string {
           </div>
         </div>
         ${walletRows}
-        ${positionHistory.map((event) => `
-          <div class="timeline-row">
-            <span>${event.date}</span>
-            <div>
-              <strong>${event.event}</strong>
-              <p>${event.detail}</p>
-              ${event.tx ? `<a href="${txLink(event.tx)}" target="_blank" rel="noreferrer">${compactAddress(event.tx, 10, 8)}</a>` : ''}
-            </div>
-          </div>
-        `).join('')}
-        ${issueRows}
+        ${positionRows}
       </div>
     </details>
   `;

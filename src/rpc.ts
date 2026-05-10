@@ -593,7 +593,7 @@ export async function loadDashboardSnapshot(): Promise<DashboardSnapshot> {
     loadMarketSnapshot(),
   ]);
   const rawPositions = await Promise.all(discovered.records.map((record) => loadPosition(record)));
-  const positions = rawPositions.filter((position) => position.liveError || isLfiUsdcPosition(position));
+  const positions = rawPositions.filter((position) => !position.liveError && isLfiUsdcPosition(position));
   const walletBalances = trackedWallets.find((wallet) => wallet.address.toLowerCase() === WALLET_ADDRESS.toLowerCase())?.balances
     ?? { eth: 0n, lfi: 0n, usdc: 0n, aero: 0n };
   return {
