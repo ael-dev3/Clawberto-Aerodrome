@@ -14,6 +14,38 @@
 | RewardsDistributor | `0x227f65131A261548b057215bB1D5Ab2997964C7d` |
 | ArtProxy | `0xE9992487b2EE03b7a91241695A58E0ef3654643E` |
 
+## Slipstream CL min-unstake deployment
+
+Use this deployment for `CL200-LFI/USDC` and similar managed CL NFT positions.
+
+| Contract | Address |
+| --- | --- |
+| CL PoolFactory | `0xf8f2eB4940CFE7d13603DDDD87f123820Fc061Ef` |
+| CL GaugeFactory | `0x385293CaE378C813F16f0C1334d774AdDDf56AbB` |
+| CL NonfungiblePositionManager | `0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53` |
+| CL SwapRouter | `0x698Cb2b6dd822994581fEa6eA4Fc755d1363A92F` |
+| CL Quoter | `0x514c8B5f54112481E28028F1166Bd78501089259` |
+| CL MixedQuoterV2 | `0xb4A9E5Fc0727BEF09D819fcfc5ece8CA9bCf09EB` |
+| CL MixedQuoterV3 | `0xCd2A7D98e82D6107eac1828ce8DeAA6acB65b555` |
+
+### Managed CL200-LFI/USDC contracts
+
+| Contract | Address |
+| --- | --- |
+| LFI token0 | `0x3722264aB15a1dfCe5a5af89e6547F7949A8ABA3` |
+| USDC token1 | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| CL200-LFI/USDC pool | `0x8343c68279587498526114e6385f0a87f248e0d9` |
+| CL200-LFI/USDC gauge | `0xe9c73937382c621770f5b7018a407c0749df6aae` |
+| FeesVotingReward | `0xd7eBa84B7d965480B82c73eE6a746B758c7CE3C1` |
+| BribeVotingReward | `0x885aB0075108d51Ac21483c182b0fb84f36A8A03` |
+
+CL ABI notes:
+
+- Resolve pools with `getPool(address,address,int24)(address)`, not `getPool(address,address,bool)`.
+- Decode CL `slot0` as `slot0()(uint160,int24,uint16,uint16,uint16,bool)`.
+- Decode CL NFT positions as `positions(uint256)(uint96,address,address,address,int24,int24,int24,uint128,uint256,uint256,uint128,uint128)`.
+- Gauge custody means `ownerOf(tokenId) == gauge`; the actionable depositor must be checked through `stakedContains(depositor, tokenId)` or recovered from deposit logs.
+
 ## Tokens
 
 - `AERO` `0x940181a94A35A4569E4529A3CDfB74e38FD98631`

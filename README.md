@@ -141,4 +141,5 @@ See `HEARTBEAT.md` for a 30-minute cron pattern and execution controls.
 Address references live in:
 - `skills/aerodrome-pool-intel/SKILL.md`
 - `skills/aerodrome-pool-intel/references/contracts.md`
+- `skills/aerodrome-pool-intel/references/cl-lfi-usdc-lp-management.md`
 - `metadata/live_contracts_base_mainnet.json`

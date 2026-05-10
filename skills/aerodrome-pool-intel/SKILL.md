@@ -21,6 +21,25 @@ Use this skill for deterministic Aerodrome discovery and pool quality analysis o
   - `AERO`: `0x940181a94A35A4569E4529A3CDfB74e38FD98631`
   - `WETH`: `0x4200000000000000000000000000000000000006`
   - `USDC`: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+- Slipstream CL min-unstake deployment for managed CL pools:
+  - `CL PoolFactory`: `0xf8f2eB4940CFE7d13603DDDD87f123820Fc061Ef`
+  - `CL GaugeFactory`: `0x385293CaE378C813F16f0C1334d774AdDDf56AbB`
+  - `CL NonfungiblePositionManager`: `0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53`
+  - `CL SwapRouter`: `0x698Cb2b6dd822994581fEa6eA4Fc755d1363A92F`
+  - `CL Quoter`: `0x514c8B5f54112481E28028F1166Bd78501089259`
+  - `CL MixedQuoterV2`: `0xb4A9E5Fc0727BEF09D819fcfc5ece8CA9bCf09EB`
+  - `CL MixedQuoterV3`: `0xCd2A7D98e82D6107eac1828ce8DeAA6acB65b555`
+
+### Managed pool focus: CL200-LFI/USDC
+
+- Pool: `0x8343c68279587498526114e6385f0a87f248e0d9`
+- Gauge: `0xe9c73937382c621770f5b7018a407c0749df6aae`
+- NFT manager: `0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53`
+- Token0 LFI: `0x3722264aB15a1dfCe5a5af89e6547F7949A8ABA3` (18 decimals)
+- Token1 USDC: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (6 decimals)
+- Tick spacing: `200`; fee: `10000` = 1% (1e6 denominator)
+- Current tracked NFT: `341002`
+- Full LP management notes: `references/cl-lfi-usdc-lp-management.md`
 
 ## Quick start
 
@@ -81,12 +100,28 @@ python3 skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py \
 
 `--token-filter` can be repeated for both sides of a pair or broader "contains token" search.
 
-For a two-token lookup (e.g., VEIL+WETH), the scanner uses factory pair-resolve calls first.
+For a two-token classic volatile/stable lookup (e.g., VEIL+WETH), the scanner uses factory pair-resolve calls first.
 This bypasses metadata snapshot lag and is the recommended path for weak LLM prompts asking for
-specific pairs. Expected path:
+specific classic pairs. Expected path:
 1. Query chain factory addresses from `FactoryRegistry`.
 2. Resolve pair directly via `getPool(token0, token1, stable)` in both stable modes.
 3. Return matched pools, if any.
+
+For Slipstream CL pools such as `CL200-LFI/USDC`, use the CL factory shape `getPool(token0, token1, int24 tickSpacing)` and the LP-management reference below. Do not coerce CL tick spacing into a `stable` boolean.
+
+## LP management workflow for CL positions
+
+For the managed `CL200-LFI/USDC` pool, load and follow `references/cl-lfi-usdc-lp-management.md` before planning stake, unstake, claim, withdraw, mint, swap, or rebalance actions.
+
+Weak-LLM-safe gates copied from the Kittenswap control plane:
+
+1. Status first: read pool `slot0`, NFT `positions(tokenId)`, `ownerOf(tokenId)`, gauge `rewardRate`, `left`, and depositor-specific `stakedContains`/`earned` when the depositor is known.
+2. Treat `ownerOf(tokenId) == gauge` as staked custody, not as the human owner. Recover/require the original depositor before gauge `withdraw` or `getReward`.
+3. If staked, principal management starts with gauge `withdraw(uint256)` from the depositor; do not call position-manager `decreaseLiquidity` while the NFT owner is the gauge.
+4. Remove old liquidity in fixed order: `collect -> decreaseLiquidity -> collect`; `burn` only with explicit close intent after liquidity and owed tokens are zero.
+5. Mint replacement CL positions through `NonfungiblePositionManager.mint((address,address,int24,int24,int24,uint256,uint256,uint256,uint256,address,uint256,uint160))`, with token order normalized, ticks aligned to `200`, ERC20 approvals targeting the NFT manager, and fresh direct simulation before signing.
+6. Post-mint managed strategy defaults to immediate gauge staking: approve NFT to gauge, `deposit(uint256)`, then verify `ownerOf(tokenId) == gauge` and `stakedContains(depositor, tokenId)`.
+7. All execution support remains plan/verification-first. Do not claim an on-chain action was executed unless a signed tx hash is verified.
 
 ## Output
 
@@ -132,11 +167,13 @@ Use this before large scans if you want stable contract manifests in CI.
 
 ## Non-negotiable execution constraints
 
-1. Read-only only for this skill. No signing, no private key handling.
-2. All reads use `cast call` over HTTPS RPC and HTTP reads are host allowlisted.
-3. Official ETH/USDC pair is hard-pinned to `10/10` safety.
-4. In strict mode, the run fails on non-finite APR/safety values or invalid totals.
-5. Every output must include explicit reasons for risky pools.
+1. Pool-intel scans remain read-only. No signing or private key handling in scanner scripts.
+2. LP-management flows must be plan/verification-first. Only broadcast if an explicit signer path exists and every printed gate is `PASS`.
+3. All reads use `cast call` over HTTPS RPC and HTTP reads are host allowlisted.
+4. Official ETH/USDC pair is hard-pinned to `10/10` safety.
+5. In strict mode, the run fails on non-finite APR/safety values or invalid totals.
+6. Every output must include explicit reasons for risky pools.
+7. For CL min-unstake pools, never use classic pool ABI assumptions: use `getPool(address,address,int24)`, 6-field `slot0`, and the CL NFT/gauge staking model documented in `references/cl-lfi-usdc-lp-management.md`.
 
 ## Operational controls
 
