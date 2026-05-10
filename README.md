@@ -2,6 +2,8 @@
 
 OpenClaw skill set for deterministic Aerodrome pool intelligence on Base (chain id 8453).
 
+This repo now includes a Hermes LP control-plane skill for cron-safe monitoring and guarded planning of the managed Aerodrome Slipstream `CL200-LFI/USDC` position.
+
 ## Scope
 
 - Enumerate Aerodrome pools from on-chain factory registry and voter relationships.
@@ -17,10 +19,31 @@ OpenClaw skill set for deterministic Aerodrome pool intelligence on Base (chain 
 ## Repository Layout
 
 - `skills/aerodrome-pool-intel/` OpenClaw skill files.
+- `skills/hermes-lp-manager/` Hermes LP heartbeat and rebalance-planning rails.
 - `metadata/` Cached live contract manifests.
 - `runs/` Latest and simulated scan outputs.
 
 ## Supported Entrypoints
+
+### Hermes LP heartbeat
+
+```bash
+python3 skills/hermes-lp-manager/scripts/hermes_lp_agent.py heartbeat \
+  --token-id 341002 \
+  --depositor "$HERMES_DEPOSITOR_ADDRESS" \
+  --output-mode highlight \
+  --out-json runs/hermes-lp-manager/latest.json \
+  --out-summary runs/hermes-lp-manager/latest.txt
+```
+
+Strict JSON entrypoint for OpenClaw-style loops:
+
+```bash
+printf '%s' '{"command":"heartbeat","args":["--from-snapshot","skills/hermes-lp-manager/tests/fixtures/hold-snapshot.json"]}' \
+  | python3 skills/hermes-lp-manager/scripts/hermes_agent.py
+```
+
+Hermes execution remains planning-only until a separate signer adapter is implemented. `HERMES_MODE=execute` fails closed by design.
 
 ### Full scan
 
@@ -128,8 +151,10 @@ Run the offline unit tests and parser checks before changing scan logic:
 
 ```bash
 python -m unittest discover -s skills/aerodrome-pool-intel/tests
+python -m unittest discover -s skills/hermes-lp-manager/tests
 python skills/aerodrome-pool-intel/scripts/aerodrome_pool_scan.py --help
 python skills/aerodrome-pool-intel/scripts/aerodrome_contract_call.py --help
+bash skills/hermes-lp-manager/scripts/hermes_contract_smoke.sh
 ```
 
 ## Heartbeat / Operational Runbook
@@ -140,6 +165,7 @@ See `HEARTBEAT.md` for a 30-minute cron pattern and execution controls.
 
 Address references live in:
 - `skills/aerodrome-pool-intel/SKILL.md`
+- `skills/hermes-lp-manager/references/lfi-usdc-pool.json`
 - `skills/aerodrome-pool-intel/references/contracts.md`
 - `skills/aerodrome-pool-intel/references/cl-lfi-usdc-lp-management.md`
 - `metadata/live_contracts_base_mainnet.json`

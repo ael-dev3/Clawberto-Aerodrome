@@ -3,6 +3,7 @@
 ## Purpose
 
 Run a periodic safety-first Aerodrome pool scan with deterministic outputs and optional strict mode.
+For managed LP automation, run the Hermes heartbeat alongside or instead of broad pool scans.
 
 ## Recommended cadence
 
@@ -11,6 +12,14 @@ Run a periodic safety-first Aerodrome pool scan with deterministic outputs and o
 - Required artifacts:
   - `latest.json`
   - `latest.csv`
+
+Hermes LP heartbeat:
+
+- Interval: every 30 minutes
+- Output directory: `runs/hermes-lp-manager/`
+- Required artifacts:
+  - `latest.json`
+  - `latest.txt`
 
 ## One-time setup
 
@@ -25,7 +34,36 @@ chmod +x /Users/marko/.openclaw/workspace/Clawberto-Aerodrome/skills/aerodrome-p
 */30 * * * * cd /Users/marko/.openclaw/workspace/Clawberto-Aerodrome && /bin/bash /Users/marko/.openclaw/workspace/Clawberto-Aerodrome/skills/aerodrome-pool-intel/scripts/heartbeat_aerodrome_scan.sh >> /Users/marko/.openclaw/workspace/Clawberto-Aerodrome/runs/aerodrome-heartbeat/cron.log 2>&1
 ```
 
+Hermes LP cron example:
+
+```cron
+*/30 * * * * cd /Users/marko/.openclaw/workspace/Clawberto-Aerodrome && HERMES_DEPOSITOR_ADDRESS=0xDepositor HERMES_OUTPUT_MODE=highlight /bin/bash /Users/marko/.openclaw/workspace/Clawberto-Aerodrome/skills/hermes-lp-manager/scripts/hermes_heartbeat.sh --once >> /Users/marko/.openclaw/workspace/Clawberto-Aerodrome/runs/hermes-lp-manager/cron.log 2>&1
+```
+
 ## Runtime knobs
+
+Hermes knobs:
+
+- `HERMES_RPC_URL` (default `https://base-rpc.publicnode.com`)
+- `HERMES_TOKEN_ID` (default `341002`)
+- `HERMES_DEPOSITOR_ADDRESS` (required for actionable claim/unstake/stake plans)
+- `HERMES_MODE` (`observe|propose|execute`, default `propose`; execute currently fails closed)
+- `HERMES_OUTPUT_MODE` (`summary|contract|highlight|raw`, default `summary`)
+- `HERMES_OUT_DIR` (default `runs/hermes-lp-manager`)
+- `HERMES_LOOP` (`1`/`0`, default `0`)
+- `HERMES_LOOP_INTERVAL_SECONDS` (default `1800`)
+- `HERMES_MIN_HEADROOM_TICKS` (default `400`)
+- `HERMES_MIN_HEADROOM_PCT` (default `0.15`)
+- `HERMES_MIN_EARNED_AERO_WEI` (default `0`)
+
+Hermes validation:
+
+```bash
+bash skills/hermes-lp-manager/scripts/hermes_contract_smoke.sh
+bash skills/hermes-lp-manager/scripts/hermes_guardrail_audit.sh
+```
+
+Pool-intel knobs:
 
 - `SCAN_MAX_POOLS` (default `120`)
 - `SCAN_WORKERS` (default `8`)
