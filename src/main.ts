@@ -2,6 +2,7 @@ import './styles.css';
 
 import { CONTRACTS, TOKEN_META, WALLET_ADDRESS } from './config';
 import { compactAddress, formatTokenAmount, percentFormat, rangeStatus, tickLabel, tickToAdjustedPrice } from './aero-math';
+import { renderLpRangeChart } from './lp-range-chart';
 import { positionHistory } from './positions';
 import { loadDashboardSnapshot, tokenDecimals, type DashboardSnapshot, type LivePosition } from './rpc';
 
@@ -176,6 +177,22 @@ function renderMasterRange(snapshot: DashboardSnapshot): string {
   `;
 }
 
+function renderPriceChartPanel(snapshot: DashboardSnapshot): string {
+  const readableRanges = snapshot.positions.filter((position) => position.tickLower !== undefined && position.tickUpper !== undefined && !position.liveError).length;
+  return `
+    <section class="panel price-chart-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Price action</p>
+          <h2>Candles with LP range bands</h2>
+        </div>
+        <span class="pill">${readableRanges} charted ranges</span>
+      </div>
+      <div id="lp-price-chart" class="lp-price-chart" aria-live="polite"></div>
+    </section>
+  `;
+}
+
 function renderTickStrip(position: LivePosition, currentTick: number): string {
   if (position.tickLower === undefined || position.tickUpper === undefined || position.tickSpacing === undefined) return '';
   const cells: string[] = [];
@@ -296,9 +313,12 @@ function renderDashboard(snapshot: DashboardSnapshot): void {
     ${renderPoolStats(snapshot)}
     ${renderWallet(snapshot)}
     ${renderMasterRange(snapshot)}
+    ${renderPriceChartPanel(snapshot)}
     ${renderPositions(snapshot)}
     ${renderHistory()}
   `);
+  const chartMount = document.querySelector<HTMLElement>('#lp-price-chart');
+  if (chartMount) void renderLpRangeChart(snapshot, chartMount);
 }
 
 async function refresh(): Promise<void> {

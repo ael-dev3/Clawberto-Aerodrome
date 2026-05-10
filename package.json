@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "lightweight-charts": "^4.2.3",
     "viem": "^2.37.13"
   },
   "devDependencies": {

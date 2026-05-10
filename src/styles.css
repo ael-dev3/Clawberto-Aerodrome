@@ -86,11 +86,11 @@ h1 {
   margin-bottom: 16px;
   font-size: clamp(42px, 7vw, 96px);
   line-height: 0.94;
-  letter-spacing: -0.07em;
+  letter-spacing: 0;
 }
 
-h2 { font-size: 28px; letter-spacing: -0.04em; margin-bottom: 6px; }
-h3 { font-size: 22px; letter-spacing: -0.03em; margin-bottom: 0; }
+h2 { font-size: 28px; letter-spacing: 0; margin-bottom: 6px; }
+h3 { font-size: 22px; letter-spacing: 0; margin-bottom: 0; }
 
 .subtitle {
   position: relative;
@@ -155,7 +155,7 @@ h3 { font-size: 22px; letter-spacing: -0.03em; margin-bottom: 0; }
 .stat-card.brand { background: linear-gradient(135deg, rgba(113, 50, 245, 0.92), rgba(58, 29, 132, 0.88)); }
 .stat-card span, .metric-label { display: block; color: var(--muted); font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
 .stat-card.brand span, .stat-card.brand small { color: rgba(255, 255, 255, 0.74); }
-.stat-card strong { display: block; margin: 18px 0 8px; font-size: clamp(24px, 3vw, 38px); letter-spacing: -0.05em; }
+.stat-card strong { display: block; margin: 18px 0 8px; font-size: clamp(24px, 3vw, 38px); letter-spacing: 0; }
 .stat-card small { color: var(--muted); }
 
 .panel, .position-card { border-radius: 28px; padding: 24px; margin-bottom: 16px; }
@@ -188,6 +188,140 @@ h3 { font-size: 22px; letter-spacing: -0.03em; margin-bottom: 0; }
 .range-bar.below-range, .range-bar.above-range { fill: rgba(246, 183, 60, 0.7); }
 .current-line { stroke: var(--cyan); stroke-width: 3; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 8px rgba(20,241,217,0.8)); }
 .current-dot { fill: var(--cyan); filter: drop-shadow(0 0 12px rgba(20,241,217,0.9)); }
+
+.price-chart-panel { overflow: hidden; }
+.lp-price-chart { min-height: 430px; }
+.chart-state {
+  min-height: 430px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--muted);
+  text-align: left;
+}
+.chart-state strong, .chart-state span { display: block; }
+.chart-state strong { color: var(--text); margin-bottom: 4px; }
+.loader.small { width: 28px; height: 28px; border-width: 3px; }
+.chart-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: stretch;
+}
+.chart-viewport {
+  position: relative;
+  min-width: 0;
+  min-height: 430px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015)),
+    rgba(0, 0, 0, 0.26);
+  overflow: hidden;
+}
+.chart-canvas {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 430px;
+}
+.chart-overlay {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+}
+.chart-range-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid color-mix(in srgb, var(--range-color) 74%, white 12%);
+  border-bottom: 1px solid color-mix(in srgb, var(--range-color) 74%, white 12%);
+  background: color-mix(in srgb, var(--range-color) 18%, transparent);
+  box-shadow: inset 0 0 28px color-mix(in srgb, var(--range-color) 18%, transparent);
+}
+.chart-range-band span {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  max-width: calc(100% - 28px);
+  transform: translateY(-50%);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border: 1px solid color-mix(in srgb, var(--range-color) 55%, white 10%);
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: rgba(7, 7, 16, 0.82);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+.chart-side {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+.chart-metric, .chart-source, .chart-range-row {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255,255,255,0.045);
+}
+.chart-metric { padding: 16px; }
+.chart-metric span, .chart-range-row small, .chart-source {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.chart-metric span {
+  display: block;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.chart-metric strong {
+  display: block;
+  margin: 9px 0 4px;
+  font-size: 26px;
+}
+.chart-source { padding: 12px 14px; }
+.chart-range-list { display: grid; gap: 10px; }
+.chart-range-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px;
+}
+.chart-range-row strong, .chart-range-row small { display: block; }
+.chart-range-row strong { margin-bottom: 4px; }
+.range-swatch {
+  width: 12px;
+  min-height: 100%;
+  border-radius: 999px;
+  background: var(--range-color);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--range-color) 50%, transparent);
+}
+.chart-fallback {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  min-height: 430px;
+}
+.chart-fallback > div:first-child {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 24px;
+  background: rgba(0,0,0,0.22);
+}
+.chart-fallback p { color: var(--muted); line-height: 1.55; }
 
 .positions-section { margin-top: 18px; }
 .position-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
@@ -223,6 +357,7 @@ h3 { font-size: 22px; letter-spacing: -0.03em; margin-bottom: 0; }
 
 @media (max-width: 980px) {
   .hero, .position-grid, .stats-grid { grid-template-columns: 1fr; }
+  .chart-layout, .chart-fallback { grid-template-columns: 1fr; }
   .wallet-panel { align-items: flex-start; flex-direction: column; }
   .wallet-balances { justify-content: flex-start; }
 }
@@ -233,4 +368,7 @@ h3 { font-size: 22px; letter-spacing: -0.03em; margin-bottom: 0; }
   .position-main, .position-details { grid-template-columns: 1fr; }
   .timeline-row { grid-template-columns: 1fr; }
   .range-svg { min-height: 260px; }
+  .lp-price-chart, .chart-state, .chart-viewport, .chart-canvas, .chart-fallback { min-height: 360px; }
+  .chart-canvas { height: 360px; }
+  .chart-range-band span { left: 8px; max-width: calc(100% - 16px); font-size: 11px; }
 }

@@ -8,6 +8,7 @@ This repo now includes a Hermes LP control-plane skill for cron-safe monitoring 
 
 - Hosted dashboard: https://ael-dev3.github.io/Clawberto-Aerodrome/
 - Shows CL200-LFI/USDC live pool tick, current price, active LP range status, gauge custody, wallet balances, AERO rewards, and LP history.
+- Includes a GeckoTerminal-backed LFI price candle chart with each readable NFT range projected as live price bands.
 - Source of truth for displayed positions: `src/positions.ts`. Every future Aerodrome LP enter/exit must update this registry and redeploy the GitHub Pages site.
 
 ## Scope
