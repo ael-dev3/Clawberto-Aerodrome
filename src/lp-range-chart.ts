@@ -15,7 +15,7 @@ import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
 import { buildRangeOverlays, formatChartPrice, type LpRangeOverlay } from './lp-range-overlays';
 import type { DashboardSnapshot } from './rpc';
 
-const CHART_HEIGHT = 430;
+const CHART_HEIGHT = 340;
 let activeChart: IChartApi | undefined;
 let activeResizeObserver: ResizeObserver | undefined;
 let activeRenderToken = 0;
@@ -34,7 +34,7 @@ function currentPrice(snapshot: DashboardSnapshot): number {
 }
 
 function chartHeight(chartNode: HTMLElement): number {
-  return Math.max(340, Math.floor(chartNode.clientHeight || CHART_HEIGHT));
+  return Math.max(300, Math.floor(chartNode.clientHeight || CHART_HEIGHT));
 }
 
 function toSeriesData(candles: GeckoCandle[]): CandlestickData<Time>[] {

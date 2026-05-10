@@ -49,6 +49,119 @@ export function tickToAdjustedPrice(tick: number, token0Decimals: number, token1
   return Math.pow(1.0001, tick) * Math.pow(10, token0Decimals - token1Decimals);
 }
 
+export interface PositionAmountEstimate {
+  token0: number;
+  token1: number;
+}
+
+export interface PositionAmountInput {
+  liquidity: bigint | number;
+  currentTick: number;
+  lowerTick: number;
+  upperTick: number;
+  token0Decimals: number;
+  token1Decimals: number;
+}
+
+export interface UsdBreakdown {
+  token0Usd: number;
+  token1Usd: number;
+  totalUsd: number;
+  token0Pct: number;
+  token1Pct: number;
+}
+
+export interface EmissionAprInput {
+  rewardRateRaw: bigint;
+  rewardTokenDecimals: number;
+  rewardTokenUsd: number;
+  positionLiquidity: bigint | number;
+  totalStakedLiquidity: bigint | number;
+  positionUsd: number;
+}
+
+const SECONDS_PER_YEAR = 31_536_000;
+
+export function rawToDecimal(raw: bigint | number | string, decimals: number): number {
+  if (typeof raw === 'number') return raw / 10 ** decimals;
+  const value = typeof raw === 'bigint' ? raw : BigInt(raw);
+  const sign = value < 0n ? -1 : 1;
+  const absolute = value < 0n ? -value : value;
+  const scale = 10n ** BigInt(decimals);
+  const whole = absolute / scale;
+  const fraction = absolute % scale;
+  return sign * (Number(whole) + Number(fraction) / 10 ** decimals);
+}
+
+export function estimatePositionTokenAmounts(input: PositionAmountInput): PositionAmountEstimate {
+  const liquidity = typeof input.liquidity === 'bigint' ? Number(input.liquidity) : input.liquidity;
+  if (!Number.isFinite(liquidity) || liquidity <= 0 || input.upperTick <= input.lowerTick) {
+    return { token0: 0, token1: 0 };
+  }
+
+  const sqrtLower = Math.pow(1.0001, input.lowerTick / 2);
+  const sqrtUpper = Math.pow(1.0001, input.upperTick / 2);
+  const sqrtCurrent = Math.pow(1.0001, input.currentTick / 2);
+  const sqrtPrice = Math.max(sqrtLower, Math.min(sqrtCurrent, sqrtUpper));
+
+  let token0Raw = 0;
+  let token1Raw = 0;
+  if (input.currentTick < input.lowerTick) {
+    token0Raw = liquidity * (sqrtUpper - sqrtLower) / (sqrtLower * sqrtUpper);
+  } else if (input.currentTick >= input.upperTick) {
+    token1Raw = liquidity * (sqrtUpper - sqrtLower);
+  } else {
+    token0Raw = liquidity * (sqrtUpper - sqrtPrice) / (sqrtPrice * sqrtUpper);
+    token1Raw = liquidity * (sqrtPrice - sqrtLower);
+  }
+
+  return {
+    token0: token0Raw / 10 ** input.token0Decimals,
+    token1: token1Raw / 10 ** input.token1Decimals,
+  };
+}
+
+export function usdBreakdown(amounts: PositionAmountEstimate, token0PriceUsd: number, token1PriceUsd: number): UsdBreakdown {
+  const token0Usd = amounts.token0 * token0PriceUsd;
+  const token1Usd = amounts.token1 * token1PriceUsd;
+  const totalUsd = token0Usd + token1Usd;
+  return {
+    token0Usd,
+    token1Usd,
+    totalUsd,
+    token0Pct: totalUsd > 0 ? (token0Usd / totalUsd) * 100 : 0,
+    token1Pct: totalUsd > 0 ? (token1Usd / totalUsd) * 100 : 0,
+  };
+}
+
+export function formatUsd(value: number | null | undefined, precision = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'n/a';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
+  }).format(value);
+}
+
+export function emissionAprPct(input: EmissionAprInput): number {
+  const rewardPerSecond = rawToDecimal(input.rewardRateRaw, input.rewardTokenDecimals);
+  const totalStakedLiquidity = typeof input.totalStakedLiquidity === 'bigint' ? Number(input.totalStakedLiquidity) : input.totalStakedLiquidity;
+  const positionLiquidity = typeof input.positionLiquidity === 'bigint' ? Number(input.positionLiquidity) : input.positionLiquidity;
+  if (
+    rewardPerSecond <= 0 ||
+    input.rewardTokenUsd <= 0 ||
+    input.positionUsd <= 0 ||
+    totalStakedLiquidity <= 0 ||
+    positionLiquidity <= 0
+  ) {
+    return 0;
+  }
+  const stakeShare = positionLiquidity / totalStakedLiquidity;
+  const annualRewardUsd = rewardPerSecond * SECONDS_PER_YEAR * input.rewardTokenUsd * stakeShare;
+  return (annualRewardUsd / input.positionUsd) * 100;
+}
+
 export function formatTokenAmount(raw: bigint | number | string, decimals: number, precision = 4): string {
   const value = typeof raw === 'bigint' ? raw : BigInt(raw);
   const scale = 10n ** BigInt(decimals);

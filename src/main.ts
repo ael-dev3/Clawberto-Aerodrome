@@ -1,7 +1,22 @@
 import './styles.css';
 
+import {
+  compactAddress,
+  emissionAprPct,
+  estimatePositionTokenAmounts,
+  formatTokenAmount,
+  formatUsd,
+  percentFormat,
+  rangeStatus,
+  rawToDecimal,
+  tickLabel,
+  tickToAdjustedPrice,
+  usdBreakdown,
+  type PositionAmountEstimate,
+  type UsdBreakdown,
+} from './aero-math';
 import { CONTRACTS, TOKEN_META, WALLET_ADDRESS } from './config';
-import { compactAddress, formatTokenAmount, percentFormat, rangeStatus, tickLabel, tickToAdjustedPrice } from './aero-math';
+import { DASHBOARD_SECTION_ORDER, type DashboardSectionId } from './dashboard-layout';
 import { renderLpRangeChart } from './lp-range-chart';
 import { positionHistory } from './positions';
 import { loadDashboardSnapshot, tokenDecimals, type DashboardSnapshot, type LivePosition } from './rpc';
@@ -32,26 +47,36 @@ function tokenSymbol(address: string | undefined, fallback: string): string {
   return Object.entries(TOKEN_META).find(([knownAddress]) => knownAddress.toLowerCase() === address.toLowerCase())?.[1].symbol ?? fallback;
 }
 
+function numberFormat(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'n/a';
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
+function compactNumber(value: bigint | number | null | undefined): string {
+  if (value === null || value === undefined) return 'n/a';
+  const numeric = typeof value === 'bigint' ? Number(value) : value;
+  if (!Number.isFinite(numeric)) return 'n/a';
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(numeric);
+}
+
 function renderShell(content: string): void {
   app.innerHTML = `
     <main class="shell">
-      <section class="hero">
-        <div class="hero-copy">
+      <header class="topbar">
+        <div>
           <p class="eyebrow">Base · Aerodrome Slipstream · CL200</p>
-          <h1>Clawberto LP Range Console</h1>
-          <p class="subtitle">Live tick health, staked custody, reward state, and full LP history for every position Hermes sets up.</p>
-          <div class="hero-actions">
-            <a href="${addressLink(CONTRACTS.pool)}" target="_blank" rel="noreferrer">Pool</a>
-            <a href="${addressLink(CONTRACTS.gauge)}" target="_blank" rel="noreferrer">Gauge</a>
-            <a href="${addressLink(WALLET_ADDRESS)}" target="_blank" rel="noreferrer">Wallet</a>
-          </div>
+          <h1>Clawberto LP Console</h1>
         </div>
-        <div class="hero-card">
-          <span class="pulse"></span>
-          <strong>Realtime RPC</strong>
-          <small>Auto-refreshing every ${REFRESH_MS / 1000}s from Base mainnet</small>
-        </div>
-      </section>
+        <nav class="toplinks" aria-label="Protocol links">
+          <a href="${addressLink(CONTRACTS.pool)}" target="_blank" rel="noreferrer">Pool</a>
+          <a href="${addressLink(CONTRACTS.gauge)}" target="_blank" rel="noreferrer">Gauge</a>
+          <a href="${addressLink(WALLET_ADDRESS)}" target="_blank" rel="noreferrer">Wallet</a>
+          <span><i></i> ${REFRESH_MS / 1000}s live</span>
+        </nav>
+      </header>
       ${content}
     </main>
   `;
@@ -62,8 +87,8 @@ function renderLoading(): void {
     <section class="panel loading-panel">
       <div class="loader"></div>
       <div>
-        <h2>Loading live LP state</h2>
-        <p>Reading pool slot0, NFT ranges, gauge staking, wallet balances, and rewards.</p>
+        <h2>Loading LP range state</h2>
+        <p>Reading pool tick, NFT ranges, gauge custody, pending AERO, and wallet balances.</p>
       </div>
     </section>
   `);
@@ -80,39 +105,127 @@ function renderError(error: unknown): void {
   document.querySelector('#retry')?.addEventListener('click', () => void refresh());
 }
 
+interface PositionValuation {
+  amounts?: PositionAmountEstimate;
+  usd?: UsdBreakdown;
+  aprPct?: number;
+  pendingAeroUsd?: number;
+}
+
+function positionValuation(position: LivePosition, snapshot: DashboardSnapshot): PositionValuation {
+  if (position.liquidity === undefined || position.tickLower === undefined || position.tickUpper === undefined) return {};
+
+  const token0Decimals = tokenDecimals(position.token0);
+  const token1Decimals = tokenDecimals(position.token1);
+  const lfiUsd = tickToAdjustedPrice(snapshot.pool.currentTick, 18, 6);
+  const token0Symbol = tokenSymbol(position.token0, 'token0');
+  const token1Symbol = tokenSymbol(position.token1, 'token1');
+  const token0Usd = token0Symbol === 'USDC' ? 1 : lfiUsd;
+  const token1Usd = token1Symbol === 'USDC' ? 1 : lfiUsd;
+  const amounts = estimatePositionTokenAmounts({
+    liquidity: position.liquidity,
+    currentTick: snapshot.pool.currentTick,
+    lowerTick: position.tickLower,
+    upperTick: position.tickUpper,
+    token0Decimals,
+    token1Decimals,
+  });
+  const usd = usdBreakdown(amounts, token0Usd, token1Usd);
+  const aprPct = snapshot.market.aeroUsd
+    ? emissionAprPct({
+      rewardRateRaw: snapshot.pool.rewardRate,
+      rewardTokenDecimals: 18,
+      rewardTokenUsd: snapshot.market.aeroUsd,
+      positionLiquidity: position.liquidity,
+      totalStakedLiquidity: snapshot.pool.stakedLiquidity,
+      positionUsd: usd.totalUsd,
+    })
+    : undefined;
+  const pendingAeroUsd = snapshot.market.aeroUsd && position.earnedAero !== undefined
+    ? rawToDecimal(position.earnedAero, 18) * snapshot.market.aeroUsd
+    : undefined;
+
+  return { amounts, usd, aprPct, pendingAeroUsd };
+}
+
+function renderRangeConsole(snapshot: DashboardSnapshot): string {
+  const price = tickToAdjustedPrice(snapshot.pool.currentTick, 18, 6);
+  const readablePositions = snapshot.positions.filter((position) => !position.liveError && position.tickLower !== undefined && position.tickUpper !== undefined);
+  const primary = readablePositions[0];
+  const primaryStatus = primary?.tickLower !== undefined && primary.tickUpper !== undefined
+    ? rangeStatus(snapshot.pool.currentTick, primary.tickLower, primary.tickUpper)
+    : undefined;
+  const primaryValuation = primary ? positionValuation(primary, snapshot) : undefined;
+  const pendingAero = primary?.earnedAero !== undefined ? formatTokenAmount(primary.earnedAero, 18, 6) : 'n/a';
+  const apr = primaryValuation?.aprPct !== undefined ? percentFormat(primaryValuation.aprPct, 2) : 'n/a';
+
+  return `
+    <section class="range-console" data-section="range-control">
+      <div class="console-head">
+        <div>
+          <p class="eyebrow">LP range first</p>
+          <h2>LFI/USDC active band</h2>
+          <p>Current price <b>${formatUsd(price, 8)}</b> per LFI · tick <b>${tickLabel(snapshot.pool.currentTick)}</b></p>
+        </div>
+        <div class="head-metrics">
+          <span class="status ${primaryStatus ? stateClass(primaryStatus.state) : ''}">${primaryStatus?.state ?? 'UNKNOWN'}</span>
+          <span>${readablePositions.length} readable / ${snapshot.positions.length} tracked</span>
+          <span>updated ${snapshot.loadedAt.toLocaleTimeString()}</span>
+        </div>
+      </div>
+      <div class="range-layout">
+        <div class="chart-card">
+          <div id="lp-price-chart" class="lp-price-chart range-first-chart" aria-live="polite"></div>
+          <div class="chart-note">Live GeckoTerminal candles with Base RPC NFT range bands. If candles fail, the on-chain range state still renders.</div>
+        </div>
+        <aside class="range-sidecar">
+          <div class="sidecar-row">
+            <span>Primary NFT</span>
+            <strong>${primary ? `#${primary.tokenId.toString()}` : 'n/a'}</strong>
+          </div>
+          <div class="sidecar-row triple">
+            <span>Lower</span><strong>${primary?.tickLower !== undefined ? tickLabel(primary.tickLower) : 'n/a'}</strong>
+            <span>Current</span><strong>${tickLabel(snapshot.pool.currentTick)}</strong>
+            <span>Upper</span><strong>${primary?.tickUpper !== undefined ? tickLabel(primary.tickUpper) : 'n/a'}</strong>
+          </div>
+          <div class="split-card">
+            <span>USD size by side</span>
+            <div class="split-line"><b>LFI</b><strong>${formatUsd(primaryValuation?.usd?.token0Usd)}</strong><em>${primaryValuation?.amounts ? `${numberFormat(primaryValuation.amounts.token0, 4)} LFI` : 'n/a'}</em></div>
+            <div class="split-line"><b>USDC</b><strong>${formatUsd(primaryValuation?.usd?.token1Usd)}</strong><em>${primaryValuation?.amounts ? `${numberFormat(primaryValuation.amounts.token1, 4)} USDC` : 'n/a'}</em></div>
+            <div class="split-total"><span>NFT total</span><strong>${formatUsd(primaryValuation?.usd?.totalUsd)}</strong></div>
+          </div>
+          <div class="reward-grid">
+            <div><span>Pending AERO</span><strong>${pendingAero}</strong><small>${formatUsd(primaryValuation?.pendingAeroUsd)}</small></div>
+            <div><span>Emission APR</span><strong>${apr}</strong><small>${snapshot.market.aeroUsd ? `AERO ${formatUsd(snapshot.market.aeroUsd, 4)}` : 'price n/a'}</small></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
 function renderPoolStats(snapshot: DashboardSnapshot): string {
   const price = tickToAdjustedPrice(snapshot.pool.currentTick, 18, 6);
+  const aeroPerDay = rawToDecimal(snapshot.pool.rewardRate, 18) * 86_400;
+  const stakedRatio = snapshot.pool.liquidity > 0n ? (Number(snapshot.pool.stakedLiquidity) / Number(snapshot.pool.liquidity)) * 100 : 0;
+
   return `
-    <section class="stats-grid">
-      <article class="stat-card brand">
-        <span>Current Tick</span>
-        <strong>${tickLabel(snapshot.pool.currentTick)}</strong>
-        <small>LFI/USDC live slot0</small>
-      </article>
-      <article class="stat-card">
-        <span>USDC per LFI</span>
-        <strong>$${price.toFixed(8)}</strong>
-        <small>Tick-adjusted for 18/6 decimals</small>
-      </article>
-      <article class="stat-card">
-        <span>Pool Fee</span>
-        <strong>${(snapshot.pool.fee / 10_000).toFixed(2)}%</strong>
-        <small>CL200 concentrated pool</small>
-      </article>
-      <article class="stat-card">
-        <span>AERO Left</span>
-        <strong>${formatTokenAmount(snapshot.pool.rewardsLeft, 18, 2)}</strong>
-        <small>Gauge emission reserve</small>
-      </article>
+    <section class="metric-strip" data-section="pool-metrics">
+      <article><span>USDC / LFI</span><strong>${formatUsd(price, 8)}</strong></article>
+      <article><span>Pool fee</span><strong>${(snapshot.pool.fee / 10_000).toFixed(2)}%</strong></article>
+      <article><span>AERO / day</span><strong>${numberFormat(aeroPerDay, 2)}</strong></article>
+      <article><span>AERO left</span><strong>${formatTokenAmount(snapshot.pool.rewardsLeft, 18, 2)}</strong></article>
+      <article><span>Pool liquidity</span><strong>${compactNumber(snapshot.pool.liquidity)}</strong></article>
+      <article><span>Staked</span><strong>${percentFormat(stakedRatio, 1)}</strong></article>
     </section>
   `;
 }
 
 function renderWallet(snapshot: DashboardSnapshot): string {
   return `
-    <section class="panel wallet-panel">
+    <section class="panel wallet-panel" data-section="wallet-secondary">
       <div>
-        <p class="eyebrow">Main wallet</p>
+        <p class="eyebrow">Secondary wallet view</p>
         <h2>${compactAddress(WALLET_ADDRESS)}</h2>
       </div>
       <div class="wallet-balances">
@@ -121,74 +234,6 @@ function renderWallet(snapshot: DashboardSnapshot): string {
         <span><b>${formatTokenAmount(snapshot.walletBalances.usdc, 6, 4)}</b> USDC</span>
         <span><b>${formatTokenAmount(snapshot.walletBalances.aero, 18, 4)}</b> AERO</span>
       </div>
-    </section>
-  `;
-}
-
-function renderMasterRange(snapshot: DashboardSnapshot): string {
-  const visible = snapshot.positions.filter((position) => position.tickLower !== undefined && position.tickUpper !== undefined);
-  if (visible.length === 0) {
-    return '<section class="panel"><h2>No live LP ranges</h2><p>No readable NFT positions are configured right now.</p></section>';
-  }
-
-  const lowerBound = Math.min(...visible.map((position) => position.tickLower!), snapshot.pool.currentTick) - 800;
-  const upperBound = Math.max(...visible.map((position) => position.tickUpper!), snapshot.pool.currentTick) + 800;
-  const scale = (tick: number) => ((tick - lowerBound) / (upperBound - lowerBound)) * 100;
-  const tickMarks = Array.from({ length: 9 }, (_, index) => Math.round(lowerBound + ((upperBound - lowerBound) * index) / 8));
-
-  const bars = visible.map((position, index) => {
-    const lower = scale(position.tickLower!);
-    const width = scale(position.tickUpper!) - lower;
-    const y = 98 + index * 54;
-    const status = rangeStatus(snapshot.pool.currentTick, position.tickLower!, position.tickUpper!);
-    return `
-      <g>
-        <rect x="${lower}%" y="${y}" width="${width}%" height="28" rx="12" class="range-bar ${stateClass(status.state)}"></rect>
-        <text x="${Math.min(96, lower + 1)}%" y="${y + 19}" class="svg-label">#${position.tokenId.toString()} · ${position.label}</text>
-      </g>
-    `;
-  }).join('');
-
-  const markerX = scale(snapshot.pool.currentTick);
-  return `
-    <section class="panel graph-panel">
-      <div class="panel-heading">
-        <div>
-          <p class="eyebrow">Global tick map</p>
-          <h2>Live range overlay</h2>
-        </div>
-        <span class="pill">Current tick ${tickLabel(snapshot.pool.currentTick)}</span>
-      </div>
-      <svg class="range-svg" viewBox="0 0 1200 ${170 + visible.length * 54}" preserveAspectRatio="none" role="img" aria-label="LP tick range map">
-        <defs>
-          <linearGradient id="gridFade" x1="0" x2="1">
-            <stop offset="0%" stop-color="#7132f5" stop-opacity="0.1"></stop>
-            <stop offset="50%" stop-color="#14f1d9" stop-opacity="0.25"></stop>
-            <stop offset="100%" stop-color="#7132f5" stop-opacity="0.1"></stop>
-          </linearGradient>
-        </defs>
-        <rect x="0" y="18" width="1200" height="${130 + visible.length * 54}" rx="28" fill="url(#gridFade)"></rect>
-        ${tickMarks.map((tick) => `<line x1="${scale(tick)}%" x2="${scale(tick)}%" y1="32" y2="${130 + visible.length * 54}" class="grid-line"></line><text x="${scale(tick)}%" y="54" class="tick-label">${tickLabel(tick)}</text>`).join('')}
-        ${bars}
-        <line x1="${markerX}%" x2="${markerX}%" y1="18" y2="${150 + visible.length * 54}" class="current-line"></line>
-        <circle cx="${markerX}%" cy="28" r="9" class="current-dot"></circle>
-      </svg>
-    </section>
-  `;
-}
-
-function renderPriceChartPanel(snapshot: DashboardSnapshot): string {
-  const readableRanges = snapshot.positions.filter((position) => position.tickLower !== undefined && position.tickUpper !== undefined && !position.liveError).length;
-  return `
-    <section class="panel price-chart-panel">
-      <div class="panel-heading">
-        <div>
-          <p class="eyebrow">Price action</p>
-          <h2>Candles with LP range bands</h2>
-        </div>
-        <span class="pill">${readableRanges} charted ranges</span>
-      </div>
-      <div id="lp-price-chart" class="lp-price-chart" aria-live="polite"></div>
     </section>
   `;
 }
@@ -204,7 +249,7 @@ function renderTickStrip(position: LivePosition, currentTick: number): string {
   return `<div class="tick-strip">${cells.join('')}</div>`;
 }
 
-function renderPositionCard(position: LivePosition, currentTick: number): string {
+function renderPositionCard(position: LivePosition, snapshot: DashboardSnapshot): string {
   if (position.liveError) {
     return `
       <article class="position-card error-card">
@@ -213,16 +258,20 @@ function renderPositionCard(position: LivePosition, currentTick: number): string
       </article>
     `;
   }
+
   const status = position.tickLower !== undefined && position.tickUpper !== undefined
-    ? rangeStatus(currentTick, position.tickLower, position.tickUpper)
+    ? rangeStatus(snapshot.pool.currentTick, position.tickLower, position.tickUpper)
     : undefined;
-  const deposited = position.deposited
-    ? `${formatTokenAmount(position.deposited.lfiRaw, 18, 4)} LFI · ${formatTokenAmount(position.deposited.usdcRaw, 6, 2)} USDC`
-    : 'n/a';
+  const valuation = positionValuation(position, snapshot);
+  const token0 = tokenSymbol(position.token0, 'token0');
+  const token1 = tokenSymbol(position.token1, 'token1');
   const owed = [
-    position.tokensOwed0 !== undefined ? `${formatTokenAmount(position.tokensOwed0, tokenDecimals(position.token0), 8)} ${tokenSymbol(position.token0, 'token0')}` : undefined,
-    position.tokensOwed1 !== undefined ? `${formatTokenAmount(position.tokensOwed1, tokenDecimals(position.token1), 8)} ${tokenSymbol(position.token1, 'token1')}` : undefined,
+    position.tokensOwed0 !== undefined ? `${formatTokenAmount(position.tokensOwed0, tokenDecimals(position.token0), 8)} ${token0}` : undefined,
+    position.tokensOwed1 !== undefined ? `${formatTokenAmount(position.tokensOwed1, tokenDecimals(position.token1), 8)} ${token1}` : undefined,
   ].filter(Boolean).join(' · ') || 'n/a';
+  const earnedAero = position.earnedAero !== undefined ? formatTokenAmount(position.earnedAero, 18, 6) : 'n/a';
+  const apr = valuation.aprPct !== undefined ? percentFormat(valuation.aprPct, 2) : 'n/a';
+
   return `
     <article class="position-card">
       <header>
@@ -233,64 +282,72 @@ function renderPositionCard(position: LivePosition, currentTick: number): string
         <span class="status ${status ? stateClass(status.state) : ''}">${status?.state ?? 'UNKNOWN'}</span>
       </header>
       <div class="position-main">
-        <div>
-          <span class="metric-label">Lower</span>
-          <strong>${position.tickLower !== undefined ? tickLabel(position.tickLower) : 'n/a'}</strong>
-        </div>
-        <div>
-          <span class="metric-label">Current</span>
-          <strong>${tickLabel(currentTick)}</strong>
-        </div>
-        <div>
-          <span class="metric-label">Upper</span>
-          <strong>${position.tickUpper !== undefined ? tickLabel(position.tickUpper) : 'n/a'}</strong>
-        </div>
+        <div><span class="metric-label">Lower</span><strong>${position.tickLower !== undefined ? tickLabel(position.tickLower) : 'n/a'}</strong></div>
+        <div><span class="metric-label">Current</span><strong>${tickLabel(snapshot.pool.currentTick)}</strong></div>
+        <div><span class="metric-label">Upper</span><strong>${position.tickUpper !== undefined ? tickLabel(position.tickUpper) : 'n/a'}</strong></div>
       </div>
-      ${renderTickStrip(position, currentTick)}
+      ${renderTickStrip(position, snapshot.pool.currentTick)}
+      <div class="asset-split">
+        <div><span>${token0}</span><strong>${formatUsd(valuation.usd?.token0Usd)}</strong><small>${valuation.amounts ? numberFormat(valuation.amounts.token0, 4) : 'n/a'} ${token0}</small></div>
+        <div><span>${token1}</span><strong>${formatUsd(valuation.usd?.token1Usd)}</strong><small>${valuation.amounts ? numberFormat(valuation.amounts.token1, 4) : 'n/a'} ${token1}</small></div>
+      </div>
       <div class="position-details">
-        <span>Owner: <b>${position.owner ? compactAddress(position.owner) : 'n/a'}</b></span>
-        <span>Staked: <b>${position.staked === undefined ? 'n/a' : position.staked ? 'yes' : 'no'}</b></span>
-        <span>Liquidity: <b>${position.liquidity?.toString() ?? 'n/a'}</b></span>
-        <span>Deposited: <b>${deposited}</b></span>
-        <span>Owed fees: <b>${owed}</b></span>
-        <span>Earned AERO: <b>${formatTokenAmount(position.earnedAero ?? 0n, 18, 8)}</b></span>
-        <span>Headroom: <b>${status ? `${percentFormat(status.lowerHeadroomPct, 1)} lower · ${percentFormat(status.upperHeadroomPct, 1)} upper` : 'n/a'}</b></span>
+        <span>NFT value <b>${formatUsd(valuation.usd?.totalUsd)}</b></span>
+        <span>Pending AERO <b>${earnedAero}</b></span>
+        <span>Emission APR <b>${apr}</b></span>
+        <span>Owed fees <b>${owed}</b></span>
+        <span>Custody <b>${position.staked === undefined ? 'n/a' : position.staked ? 'gauge staked' : 'wallet'}</b></span>
+        <span>Liquidity <b>${compactNumber(position.liquidity)}</b></span>
+        <span>Owner <b>${position.owner ? compactAddress(position.owner) : 'n/a'}</b></span>
+        <span>Headroom <b>${status ? `${percentFormat(status.lowerHeadroomPct, 1)} / ${percentFormat(status.upperHeadroomPct, 1)}` : 'n/a'}</b></span>
       </div>
-      <p>${position.notes}</p>
-      <div class="tx-list">
-        ${position.setupTxs.length === 0 ? '<span>No Hermes setup txs recorded.</span>' : position.setupTxs.map((tx) => `<a href="${txLink(tx.hash)}" target="_blank" rel="noreferrer">${tx.label}</a>`).join('')}
-      </div>
+      <details class="tx-details">
+        <summary>Setup txs and notes</summary>
+        <p>${position.notes}</p>
+        <div class="tx-list">
+          ${position.setupTxs.length === 0 ? '<span>No Hermes setup txs recorded.</span>' : position.setupTxs.map((tx) => `<a href="${txLink(tx.hash)}" target="_blank" rel="noreferrer">${tx.label}</a>`).join('')}
+        </div>
+      </details>
     </article>
   `;
 }
 
 function renderPositions(snapshot: DashboardSnapshot): string {
-  const cards = snapshot.positions.length === 0
+  const activePositions = snapshot.positions.filter((position) => !position.liveError);
+  const cards = activePositions.length === 0
     ? '<article class="position-card empty-card"><h3>No current LP positions</h3><p>The active registry is empty. Historical entries remain below so exited LPs are still visible.</p></article>'
-    : snapshot.positions.map((position) => renderPositionCard(position, snapshot.pool.currentTick)).join('');
+    : activePositions.map((position) => renderPositionCard(position, snapshot)).join('');
   return `
-    <section class="positions-section">
-      <div class="panel-heading">
+    <section class="positions-section" data-section="positions-primary">
+      <div class="section-heading">
         <div>
-          <p class="eyebrow">Managed LPs</p>
-          <h2>Position status</h2>
+          <p class="eyebrow">Active positions</p>
+          <h2>Range, USD split, rewards</h2>
         </div>
-        <span class="pill">${snapshot.positions.length} tracked NFTs</span>
+        <span class="pill">${activePositions.length} active / ${snapshot.positions.length} tracked</span>
       </div>
       <div class="position-grid">${cards}</div>
     </section>
   `;
 }
 
-function renderHistory(): string {
+function renderHistory(snapshot: DashboardSnapshot): string {
+  const issuePositions = snapshot.positions.filter((position) => position.liveError);
+  const issueRows = issuePositions.map((position) => `
+          <div class="timeline-row diagnostic-row">
+            <span>Live read</span>
+            <div>
+              <strong>#${position.tokenId.toString()} · ${position.label}</strong>
+              <p>${position.liveError}</p>
+            </div>
+          </div>
+        `).join('');
   return `
-    <section class="panel history-panel">
-      <div class="panel-heading">
-        <div>
-          <p class="eyebrow">Audit trail</p>
-          <h2>LP history</h2>
-        </div>
-      </div>
+    <details class="panel history-panel" data-section="history-secondary">
+      <summary>
+        <span><b>LP history</b><em>${positionHistory.length} events${issuePositions.length ? ` · ${issuePositions.length} reference read issue${issuePositions.length === 1 ? '' : 's'}` : ''}, collapsed to keep range first</em></span>
+        <strong>Open</strong>
+      </summary>
       <div class="timeline">
         ${positionHistory.map((event) => `
           <div class="timeline-row">
@@ -302,21 +359,21 @@ function renderHistory(): string {
             </div>
           </div>
         `).join('')}
+        ${issueRows}
       </div>
-    </section>
+    </details>
   `;
 }
 
 function renderDashboard(snapshot: DashboardSnapshot): void {
-  renderShell(`
-    <div class="topline">Last updated ${snapshot.loadedAt.toLocaleTimeString()} · Base chain live reads</div>
-    ${renderPoolStats(snapshot)}
-    ${renderWallet(snapshot)}
-    ${renderMasterRange(snapshot)}
-    ${renderPriceChartPanel(snapshot)}
-    ${renderPositions(snapshot)}
-    ${renderHistory()}
-  `);
+  const sections: Record<DashboardSectionId, string> = {
+    'range-control': renderRangeConsole(snapshot),
+    'positions-primary': renderPositions(snapshot),
+    'pool-metrics': renderPoolStats(snapshot),
+    'wallet-secondary': renderWallet(snapshot),
+    'history-secondary': renderHistory(snapshot),
+  };
+  renderShell(DASHBOARD_SECTION_ORDER.map((section) => sections[section]).join(''));
   const chartMount = document.querySelector<HTMLElement>('#lp-price-chart');
   if (chartMount) void renderLpRangeChart(snapshot, chartMount);
 }

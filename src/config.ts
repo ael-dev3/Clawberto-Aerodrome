@@ -19,7 +19,7 @@ export const TOKEN_META = {
 } as const;
 
 export const RPC_ENDPOINTS = [
-  'https://mainnet.base.org',
   'https://base-rpc.publicnode.com',
   'https://1rpc.io/base',
+  'https://mainnet.base.org',
 ] as const;
