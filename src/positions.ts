@@ -1,5 +1,4 @@
 import type { Address } from 'viem';
-import { CONTRACTS, WALLET_ADDRESS } from './config';
 
 export type PositionOrigin = 'hermes-managed' | 'ael-existing' | 'historical';
 
@@ -22,45 +21,14 @@ export interface ManagedPositionRecord {
   };
 }
 
-export const managedPositions: ManagedPositionRecord[] = [
-  {
-    tokenId: 345395n,
-    label: 'Hermes CL200 one-tick band',
-    origin: 'hermes-managed',
-    pair: 'LFI/USDC',
-    pool: CONTRACTS.pool,
-    gauge: CONTRACTS.gauge,
-    nftManager: CONTRACTS.nftManager,
-    depositor: WALLET_ADDRESS,
-    enteredAt: '2026-05-10',
-    intendedRange: 'One CL200 tick, -364600 to -364400, rebalanced from tick -364502',
-    notes: 'Rebalanced by the Hermes one-cron Aerodrome executor into the active one-tick band and staked into the Aerodrome gauge.',
-    deposited: {
-      lfiRaw: 263385613n,
-      usdcRaw: 1n,
-    },
-    setupTxs: [
-      { label: 'Mint one-tick NFT #345395', hash: '0xe30504e1f91f16bd72bad7ecf14a0c0948e252789ea167139075f4b458571581' },
-      { label: 'Approve NFT #345395 to gauge', hash: '0x2a69becfb76878ae60dcc8dd233d76f02aa8337e5f067ddf79cbb035c1126f00' },
-      { label: 'Stake NFT #345395', hash: '0x1c7051ba43fcbbc0a262e8c655923d0db28f9b6fa683a2c5049327594098531b' },
-    ],
-  },
-  {
-    tokenId: 341002n,
-    label: 'Ael reference position',
-    origin: 'ael-existing',
-    pair: 'LFI/USDC',
-    pool: CONTRACTS.pool,
-    gauge: CONTRACTS.gauge,
-    nftManager: CONTRACTS.nftManager,
-    enteredAt: 'Before Hermes management',
-    intendedRange: 'Existing staked range supplied by Ael',
-    notes: 'Tracked for dashboard context. Depositor is not configured, so live staking custody is inferred from ownerOf == gauge.',
-    setupTxs: [],
-  },
-];
+export const managedPositions: ManagedPositionRecord[] = [];
 
 export const positionHistory = [
+  {
+    date: '2026-05-10',
+    event: 'On-chain audit: no active tracked LP',
+    detail: 'Base RPC and current gauge NFT checks found no active LFI/USDC Slipstream NFT for either tracked wallet. Wallet ERC-20 balances still render live at the top of the dashboard.',
+  },
   {
     date: '2026-05-10',
     event: 'Exited previous Hermes NFT #345359',
@@ -266,13 +234,15 @@ export const positionHistory = [
   },
   {
     date: '2026-05-10',
-    event: 'Tracking existing NFT #341002',
-    detail: 'Ael reference position is shown for context. Live owner/range reads come from Base RPC; depositor is unknown unless later recovered.',
-    tokenId: 341002n,
+    event: 'Exited and burned NFT #341439',
+    detail: 'Base logs show NFT #341439 moved from gauge back to Clawberto, then to the zero address. It is no longer an active LP and is intentionally not in the active registry.',
+    tokenId: 341439n,
+    tx: '0x9dfdb8e5ac2aefd837f07ffe46a0ad95482898c185b7b8007021f3cb1a94911b' as `0x${string}`,
   },
   {
     date: '2026-05-10',
-    event: 'No exited Hermes positions recorded yet',
-    detail: 'When a managed LP is exited, this timeline and the active registry above must be updated so the site shows the no-position or historical state.',
+    event: 'Rejected stale Ael NFT #341002',
+    detail: 'Live RPC resolves #341002 under the alternate position manager as WETH/USDC with zero liquidity and no stake for either tracked wallet, so it is excluded from LFI/USDC scoring.',
+    tokenId: 341002n,
   },
 ];

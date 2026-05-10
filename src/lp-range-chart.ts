@@ -155,9 +155,11 @@ function renderChartFrame(snapshot: DashboardSnapshot, overlays: LpRangeOverlay[
 
 export async function renderLpRangeChart(snapshot: DashboardSnapshot, mount: HTMLElement): Promise<void> {
   resetChart();
+  mount.classList.remove('compact-chart');
   const overlays = buildRangeOverlays(snapshot);
   if (overlays.length === 0) {
-    mount.innerHTML = '<div class="chart-state"><strong>No readable LP ranges</strong><span>Add a position in src/positions.ts to show chart overlays.</span></div>';
+    mount.classList.add('compact-chart');
+    mount.innerHTML = '<div class="chart-state compact-state"><strong>No active readable LP ranges</strong><span>Tracked NFTs are empty, closed, or unavailable from the current RPC read.</span></div>';
     return;
   }
 

@@ -4,9 +4,13 @@ import {
   alignFiftyPercentRange,
   decodeSignedWord,
   emissionAprPct,
+  estimatedFeeAprPct,
   estimatePositionTokenAmounts,
   formatTokenAmount,
   formatUsd,
+  impermanentLossPct,
+  priceToAdjustedTick,
+  profitabilityIndex,
   rangeStatus,
   tickToAdjustedPrice,
   usdBreakdown,
@@ -36,6 +40,7 @@ describe('Aerodrome CL math', () => {
     const price = tickToAdjustedPrice(-365879, 18, 6);
     expect(price).toBeGreaterThan(0.00012);
     expect(price).toBeLessThan(0.00013);
+    expect(Math.round(priceToAdjustedTick(price, 18, 6))).toBe(-365879);
   });
 
   it('formats raw token amounts from bigint balances', () => {
@@ -79,9 +84,22 @@ describe('Aerodrome CL math', () => {
     expect(apr).toBeCloseTo(39.42, 2);
   });
 
+  it('estimates fee APR, IL, and profitability index without cost-basis assumptions', () => {
+    expect(estimatedFeeAprPct(100_000, 0.0001, 1_000_000)).toBeCloseTo(0.365, 3);
+    expect(impermanentLossPct(2)).toBeCloseTo(-5.72, 2);
+    expect(profitabilityIndex({
+      emissionAprPct: 50,
+      feeAprPct: 10,
+      volatilityPct: 20,
+      impermanentLossPct: -5,
+      pendingRewardsUsd: 5,
+      portfolioUsd: 100,
+    })).toBeCloseTo(54.75, 2);
+  });
+
   it('keeps LP range as the first dashboard content section', () => {
     expect(DASHBOARD_SECTION_ORDER[0]).toBe('range-control');
-    expect(DASHBOARD_SECTION_ORDER.indexOf('range-control')).toBeLessThan(DASHBOARD_SECTION_ORDER.indexOf('wallet-secondary'));
-    expect(DASHBOARD_SECTION_ORDER.indexOf('range-control')).toBeLessThan(DASHBOARD_SECTION_ORDER.indexOf('history-secondary'));
+    expect(DASHBOARD_SECTION_ORDER[1]).toBe('analytics-bottom');
+    expect(DASHBOARD_SECTION_ORDER.at(-1)).toBe('diagnostics-secondary');
   });
 });

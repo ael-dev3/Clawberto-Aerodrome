@@ -2,10 +2,11 @@ import { createPublicClient, fallback, http, type Address } from 'viem';
 import { base } from 'viem/chains';
 
 import { erc20Abi, gaugeAbi, nftManagerAbi, poolAbi } from './aero-abis';
-import { CONTRACTS, RPC_ENDPOINTS, TOKEN_META, WALLET_ADDRESS } from './config';
+import { CONTRACTS, RPC_ENDPOINTS, TOKEN_META, TRACKED_WALLETS, WALLET_ADDRESS } from './config';
 import { managedPositions, type ManagedPositionRecord } from './positions';
 
 const AERO_DEXSCREENER_URL = `https://api.dexscreener.com/latest/dex/tokens/${CONTRACTS.aero}`;
+const DEXSCREENER_PAIR_URL = 'https://api.dexscreener.com/latest/dex/pairs/base';
 const MARKET_TIMEOUT_MS = 5_000;
 
 export const client = createPublicClient({
@@ -49,12 +50,17 @@ export interface MarketSnapshot {
   aeroUsd?: number;
   aeroUsdSource: string;
   aeroUsdError?: string;
+  lfiUsd?: number;
+  ethUsd?: number;
+  managedPair?: PairMarketSnapshot;
+  referencePair?: PairMarketSnapshot;
 }
 
 export interface DashboardSnapshot {
   pool: PoolSnapshot;
   positions: LivePosition[];
   walletBalances: WalletBalances;
+  trackedWallets: TrackedWalletSnapshot[];
   market: MarketSnapshot;
   loadedAt: Date;
 }
@@ -62,14 +68,50 @@ export interface DashboardSnapshot {
 interface DexscreenerPair {
   chainId?: string;
   dexId?: string;
+  url?: string;
   pairAddress?: string;
+  labels?: string[];
+  priceNative?: string;
   priceUsd?: string;
   baseToken?: { symbol?: string; address?: string };
   quoteToken?: { symbol?: string; address?: string };
+  txns?: Record<string, { buys?: number; sells?: number }>;
+  volume?: Record<string, number>;
+  priceChange?: Record<string, number>;
+  liquidity?: { usd?: number; base?: number; quote?: number };
+  fdv?: number;
+  marketCap?: number;
 }
 
 interface DexscreenerResponse {
   pairs?: DexscreenerPair[];
+  pair?: DexscreenerPair;
+}
+
+export interface PairMarketSnapshot {
+  pairAddress: Address;
+  dexId?: string;
+  url?: string;
+  baseSymbol?: string;
+  quoteSymbol?: string;
+  priceUsd?: number;
+  priceNative?: number;
+  liquidityUsd?: number;
+  liquidityBase?: number;
+  liquidityQuote?: number;
+  volume?: Record<string, number>;
+  priceChange?: Record<string, number>;
+  source: string;
+  error?: string;
+}
+
+export interface TrackedWalletSnapshot {
+  label: string;
+  shortLabel: string;
+  address: Address;
+  role: string;
+  balances: WalletBalances;
+  error?: string;
 }
 
 export async function loadPoolSnapshot(): Promise<PoolSnapshot> {
@@ -93,14 +135,35 @@ export async function loadPoolSnapshot(): Promise<PoolSnapshot> {
   };
 }
 
-export async function loadWalletBalances(): Promise<WalletBalances> {
+export async function loadWalletBalances(address: Address = WALLET_ADDRESS): Promise<WalletBalances> {
   const [eth, lfi, usdc, aero] = await Promise.all([
-    client.getBalance({ address: WALLET_ADDRESS }),
-    client.readContract({ address: CONTRACTS.lfi, abi: erc20Abi, functionName: 'balanceOf', args: [WALLET_ADDRESS] }),
-    client.readContract({ address: CONTRACTS.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [WALLET_ADDRESS] }),
-    client.readContract({ address: CONTRACTS.aero, abi: erc20Abi, functionName: 'balanceOf', args: [WALLET_ADDRESS] }),
+    client.getBalance({ address }),
+    client.readContract({ address: CONTRACTS.lfi, abi: erc20Abi, functionName: 'balanceOf', args: [address] }),
+    client.readContract({ address: CONTRACTS.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [address] }),
+    client.readContract({ address: CONTRACTS.aero, abi: erc20Abi, functionName: 'balanceOf', args: [address] }),
   ]);
   return { eth, lfi, usdc, aero };
+}
+
+export async function loadTrackedWallet(wallet: (typeof TRACKED_WALLETS)[number]): Promise<TrackedWalletSnapshot> {
+  try {
+    return {
+      label: wallet.label,
+      shortLabel: wallet.shortLabel,
+      address: wallet.address,
+      role: wallet.role,
+      balances: await loadWalletBalances(wallet.address),
+    };
+  } catch (error) {
+    return {
+      label: wallet.label,
+      shortLabel: wallet.shortLabel,
+      address: wallet.address,
+      role: wallet.role,
+      balances: { eth: 0n, lfi: 0n, usdc: 0n, aero: 0n },
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export async function loadAeroUsdPrice(): Promise<MarketSnapshot> {
@@ -109,7 +172,7 @@ export async function loadAeroUsdPrice(): Promise<MarketSnapshot> {
   }
 
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), MARKET_TIMEOUT_MS);
+  const timer = globalThis.setTimeout(() => controller.abort(), MARKET_TIMEOUT_MS);
   try {
     const response = await fetch(AERO_DEXSCREENER_URL, {
       headers: { Accept: 'application/json' },
@@ -135,7 +198,7 @@ export async function loadAeroUsdPrice(): Promise<MarketSnapshot> {
     if (!Number.isFinite(aeroUsd) || aeroUsd <= 0) throw new Error('No usable AERO/USD pair');
     return {
       aeroUsd,
-      aeroUsdSource: preferred?.pairAddress ? `Dexscreener · ${preferred.pairAddress}` : 'Dexscreener',
+      aeroUsdSource: preferred?.pairAddress ? `Dexscreener - ${preferred.pairAddress}` : 'Dexscreener',
     };
   } catch (error) {
     return {
@@ -143,8 +206,84 @@ export async function loadAeroUsdPrice(): Promise<MarketSnapshot> {
       aeroUsdError: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    window.clearTimeout(timer);
+    globalThis.clearTimeout(timer);
   }
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function normalizePair(pair: DexscreenerPair | undefined, pairAddress: Address): PairMarketSnapshot {
+  if (!pair) {
+    return {
+      pairAddress,
+      source: 'Dexscreener unavailable',
+      error: 'No pair payload returned',
+    };
+  }
+
+  return {
+    pairAddress,
+    dexId: pair.dexId,
+    url: pair.url,
+    baseSymbol: pair.baseToken?.symbol,
+    quoteSymbol: pair.quoteToken?.symbol,
+    priceUsd: finiteNumber(pair.priceUsd),
+    priceNative: finiteNumber(pair.priceNative),
+    liquidityUsd: finiteNumber(pair.liquidity?.usd),
+    liquidityBase: finiteNumber(pair.liquidity?.base),
+    liquidityQuote: finiteNumber(pair.liquidity?.quote),
+    volume: pair.volume,
+    priceChange: pair.priceChange,
+    source: pair.pairAddress ? `Dexscreener - ${pair.pairAddress}` : 'Dexscreener',
+  };
+}
+
+export async function loadPairMarket(pairAddress: Address): Promise<PairMarketSnapshot> {
+  if (typeof fetch === 'undefined') {
+    return { pairAddress, source: 'Dexscreener unavailable', error: 'fetch unavailable' };
+  }
+
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), MARKET_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${DEXSCREENER_PAIR_URL}/${pairAddress}`, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Dexscreener ${response.status}`);
+    const body = (await response.json()) as DexscreenerResponse;
+    return normalizePair(body.pair ?? body.pairs?.[0], pairAddress);
+  } catch (error) {
+    return {
+      pairAddress,
+      source: 'Dexscreener unavailable',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
+}
+
+export async function loadMarketSnapshot(): Promise<MarketSnapshot> {
+  const [aeroMarket, managedPair, referencePair] = await Promise.all([
+    loadAeroUsdPrice(),
+    loadPairMarket(CONTRACTS.pool),
+    loadPairMarket(CONTRACTS.lfiReferencePool),
+  ]);
+  const lfiUsd = managedPair.priceUsd ?? referencePair.priceUsd;
+  const ethUsd = referencePair.priceUsd && referencePair.priceNative
+    ? referencePair.priceUsd / referencePair.priceNative
+    : undefined;
+  return {
+    ...aeroMarket,
+    lfiUsd,
+    ethUsd,
+    managedPair,
+    referencePair,
+  };
 }
 
 export async function loadPosition(record: ManagedPositionRecord): Promise<LivePosition> {
@@ -193,13 +332,15 @@ export async function loadPosition(record: ManagedPositionRecord): Promise<LiveP
 }
 
 export async function loadDashboardSnapshot(): Promise<DashboardSnapshot> {
-  const [pool, walletBalances, positions, market] = await Promise.all([
+  const [pool, trackedWallets, positions, market] = await Promise.all([
     loadPoolSnapshot(),
-    loadWalletBalances(),
+    Promise.all(TRACKED_WALLETS.map((wallet) => loadTrackedWallet(wallet))),
     Promise.all(managedPositions.map((record) => loadPosition(record))),
-    loadAeroUsdPrice(),
+    loadMarketSnapshot(),
   ]);
-  return { pool, walletBalances, positions, market, loadedAt: new Date() };
+  const walletBalances = trackedWallets.find((wallet) => wallet.address.toLowerCase() === WALLET_ADDRESS.toLowerCase())?.balances
+    ?? { eth: 0n, lfi: 0n, usdc: 0n, aero: 0n };
+  return { pool, walletBalances, trackedWallets, positions, market, loadedAt: new Date() };
 }
 
 export function tokenDecimals(address?: Address): number {

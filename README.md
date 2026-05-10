@@ -7,9 +7,13 @@ This repo now includes a Hermes LP control-plane skill for cron-safe monitoring 
 ## Live LP Dashboard
 
 - Hosted dashboard: https://ael-dev3.github.io/Clawberto-Aerodrome/
-- Shows CL200-LFI/USDC live pool tick, current price, active LP range status, gauge custody, wallet balances, AERO rewards, and LP history.
+- Shows CL200-LFI/USDC live pool tick, current price, active LP range status, gauge custody, top-of-page tracked wallet balances, AERO rewards, and LP history.
+- Tracks the Clawberto agent wallet `0xC979efda857823bcA9A335a6c7b62A7531e1cFEA` and Ael manual wallet `0x8db2Ef0C439ca22f736A66988a5491a6219F679e`.
 - Includes a GeckoTerminal-backed LFI price candle chart with each readable NFT range projected as live price bands.
-- Source of truth for displayed positions: `src/positions.ts`. Every future Aerodrome LP enter/exit must update this registry and redeploy the GitHub Pages site.
+- Adds bottom-of-page LFI analytics: 1h/2h/6h/12h/24h/48h price windows, pool-side USD sizing, pending emissions, APR stack, IL/hold delta, volatility-based range suggestion, and a manual-human-vs-AI-agent profitability index.
+- The head-to-head score shows each wallet's confirmed LP position size, tracked wallet value, current APR, pending emissions, LFI/USDC LP balance split, range headroom on each side, and confirmed LP NFT count. A wallet always receives ERC-20 balance tracking, but only receives LP credit when the dashboard can attribute a live NFT to that wallet/depositor.
+- Current LP registry: empty. Base RPC/log checks show Clawberto NFT `#341439` was withdrawn and burned, while the stale Ael `#341002` reference is not a live LFI/USDC stake for either tracked wallet.
+- Source of truth for displayed active positions: `src/positions.ts`. Every future Aerodrome LP enter/exit must update this registry and redeploy the GitHub Pages site.
 
 ## Scope
 

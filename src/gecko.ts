@@ -33,7 +33,7 @@ export interface GeckoOhlcvOptions {
   timeoutMs?: number;
 }
 
-let candleCache: CachedCandles | undefined;
+const candleCache = new Map<string, CachedCandles>();
 
 function finiteNumber(value: unknown): number | undefined {
   const parsed = Number(value);
@@ -101,8 +101,9 @@ export async function fetchGeckoPoolOhlcv(options: GeckoOhlcvOptions = {}): Prom
 
   const url = buildOhlcvUrl(params);
   const now = Date.now();
-  if (candleCache?.key === url && now - candleCache.loadedAt < CANDLE_CACHE_MS) {
-    return candleCache.candles;
+  const cached = candleCache.get(url);
+  if (cached && now - cached.loadedAt < CANDLE_CACHE_MS) {
+    return cached.candles;
   }
 
   const controller = new AbortController();
@@ -120,7 +121,7 @@ export async function fetchGeckoPoolOhlcv(options: GeckoOhlcvOptions = {}): Prom
     if (candles.length === 0) {
       throw new Error('GeckoTerminal returned no usable OHLCV candles');
     }
-    candleCache = { key: url, loadedAt: now, candles };
+    candleCache.set(url, { key: url, loadedAt: now, candles });
     return candles;
   } finally {
     globalThis.clearTimeout(timeout);

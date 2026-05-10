@@ -17,6 +17,7 @@ export interface RangeStatus {
 }
 
 const LOG_BASE = Math.log(1.0001);
+const SECONDS_PER_YEAR = 31_536_000;
 
 export function alignFiftyPercentRange(currentTick: number, tickSpacing: number): AlignedRange {
   const lowerRaw = currentTick + Math.log(0.5) / LOG_BASE;
@@ -47,6 +48,19 @@ export function rangeStatus(currentTick: number, lowerTick: number, upperTick: n
 
 export function tickToAdjustedPrice(tick: number, token0Decimals: number, token1Decimals: number): number {
   return Math.pow(1.0001, tick) * Math.pow(10, token0Decimals - token1Decimals);
+}
+
+export function priceToAdjustedTick(price: number, token0Decimals: number, token1Decimals: number): number {
+  if (!Number.isFinite(price) || price <= 0) return 0;
+  return Math.log(price / Math.pow(10, token0Decimals - token1Decimals)) / LOG_BASE;
+}
+
+export function alignTickDown(tick: number, tickSpacing: number): number {
+  return Math.floor(tick / tickSpacing) * tickSpacing;
+}
+
+export function alignTickUp(tick: number, tickSpacing: number): number {
+  return Math.ceil(tick / tickSpacing) * tickSpacing;
 }
 
 export interface PositionAmountEstimate {
@@ -80,7 +94,15 @@ export interface EmissionAprInput {
   positionUsd: number;
 }
 
-const SECONDS_PER_YEAR = 31_536_000;
+export interface ProfitabilityIndexInput {
+  emissionAprPct?: number;
+  feeAprPct?: number;
+  volatilityPct?: number;
+  impermanentLossPct?: number;
+  pendingRewardsUsd?: number;
+  portfolioUsd?: number;
+  outOfRange?: boolean;
+}
 
 export function rawToDecimal(raw: bigint | number | string, decimals: number): number {
   if (typeof raw === 'number') return raw / 10 ** decimals;
@@ -162,6 +184,52 @@ export function emissionAprPct(input: EmissionAprInput): number {
   return (annualRewardUsd / input.positionUsd) * 100;
 }
 
+export function estimatedFeeAprPct(volume24hUsd: number | undefined, feePct: number, liquidityUsd: number | undefined): number | undefined {
+  if (
+    volume24hUsd === undefined ||
+    liquidityUsd === undefined ||
+    !Number.isFinite(volume24hUsd) ||
+    !Number.isFinite(feePct) ||
+    !Number.isFinite(liquidityUsd) ||
+    volume24hUsd <= 0 ||
+    feePct <= 0 ||
+    liquidityUsd <= 0
+  ) {
+    return undefined;
+  }
+  return (volume24hUsd * feePct * 365 / liquidityUsd) * 100;
+}
+
+export function impermanentLossPct(priceRatio: number): number {
+  if (!Number.isFinite(priceRatio) || priceRatio <= 0) return 0;
+  return ((2 * Math.sqrt(priceRatio)) / (1 + priceRatio) - 1) * 100;
+}
+
+export function holdVsLpPct(lpUsd: number | undefined, holdUsd: number | undefined): number | undefined {
+  if (
+    lpUsd === undefined ||
+    holdUsd === undefined ||
+    !Number.isFinite(lpUsd) ||
+    !Number.isFinite(holdUsd) ||
+    holdUsd <= 0
+  ) {
+    return undefined;
+  }
+  return (lpUsd / holdUsd - 1) * 100;
+}
+
+export function profitabilityIndex(input: ProfitabilityIndexInput): number {
+  const emissionApr = input.emissionAprPct ?? 0;
+  const feeApr = input.feeAprPct ?? 0;
+  const volatilityPenalty = Math.max(0, input.volatilityPct ?? 0) * 0.35;
+  const ilPenalty = Math.max(0, -(input.impermanentLossPct ?? 0)) * 0.65;
+  const rangePenalty = input.outOfRange ? 15 : 0;
+  const pendingBoost = input.pendingRewardsUsd && input.portfolioUsd && input.portfolioUsd > 0
+    ? Math.min(25, (input.pendingRewardsUsd / input.portfolioUsd) * 100)
+    : 0;
+  return Math.max(0, emissionApr + feeApr + pendingBoost - volatilityPenalty - ilPenalty - rangePenalty);
+}
+
 export function formatTokenAmount(raw: bigint | number | string, decimals: number, precision = 4): string {
   const value = typeof raw === 'bigint' ? raw : BigInt(raw);
   const scale = 10n ** BigInt(decimals);
@@ -175,7 +243,7 @@ export function formatTokenAmount(raw: bigint | number | string, decimals: numbe
 }
 
 export function compactAddress(address: string, head = 6, tail = 4): string {
-  return `${address.slice(0, head)}…${address.slice(-tail)}`;
+  return `${address.slice(0, head)}...${address.slice(-tail)}`;
 }
 
 export function decodeSignedWord(hexWord: string): number {
