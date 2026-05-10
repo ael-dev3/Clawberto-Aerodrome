@@ -1,0 +1,45 @@
+{
+  "name": "CL200-LFI-USDC",
+  "chain": "base",
+  "chain_id": 8453,
+  "rpc_url": "https://base-rpc.publicnode.com",
+  "pool_address": "0x8343c68279587498526114e6385f0a87f248e0d9",
+  "gauge_address": "0xe9c73937382c621770f5b7018a407c0749df6aae",
+  "nft_manager_address": "0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53",
+  "swap_router_address": "0x698Cb2b6dd822994581fEa6eA4Fc755d1363A92F",
+  "quoter_address": "0x514c8B5f54112481E28028F1166Bd78501089259",
+  "token0": {
+    "symbol": "LFI",
+    "address": "0x3722264aB15a1dfCe5a5af89e6547F7949A8ABA3",
+    "decimals": 18
+  },
+  "token1": {
+    "symbol": "USDC",
+    "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "decimals": 6
+  },
+  "tick_spacing": 200,
+  "fee_units": 10000,
+  "fee_percent": 1.0,
+  "managed_position": {
+    "token_id": 341002,
+    "depositor_env": "HERMES_DEPOSITOR_ADDRESS"
+  },
+  "ui_pool_info": {
+    "captured_at": "2026-05-10",
+    "source": "user-provided pool info",
+    "apr_pct": 54749.26,
+    "tvl_usd": 33539.65,
+    "volume_24h_usd": 798370.55,
+    "fees_24h_usd": 7983.7,
+    "trading_fee_percent": 1.0
+  },
+  "strategy": {
+    "min_headroom_ticks": 400,
+    "min_headroom_pct": 0.15,
+    "min_earned_aero_wei": "0",
+    "min_tvl_usd": 10000,
+    "default_slippage_bps": 100,
+    "replacement_width_ticks": 2400
+  }
+}
