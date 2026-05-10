@@ -25,7 +25,7 @@ export interface ManagedPositionRecord {
 
 export const managedPositions: ManagedPositionRecord[] = [
   {
-    tokenId: 346421n,
+    tokenId: 346478n,
     label: 'Hermes CL200 one-tick band',
     origin: 'hermes-managed',
     pair: 'LFI/USDC',
@@ -34,22 +34,36 @@ export const managedPositions: ManagedPositionRecord[] = [
     nftManager: CONTRACTS.nftManager,
     depositor: WALLET_ADDRESS,
     enteredAt: '2026-05-10',
-    intendedRange: 'One CL200 tick, -364600 to -364400, rebalanced from tick -364425',
+    intendedRange: 'One CL200 tick, -364200 to -364000, rebalanced from tick -364153',
     notes: 'Rebalanced by the Hermes one-cron Aerodrome executor into the active one-tick band and staked into the Aerodrome gauge.',
     deposited: {
-      lfiRaw: 9732652667442594946777n,
-      usdcRaw: 10279142n,
+      lfiRaw: 56319598745364612426853n,
+      usdcRaw: 2709184n,
     },
     setupTxs: [
-      { label: 'Balance LFI to USDC', hash: '0x52b156c9c4de0951cf1f20859222349e07206ce8ea272d39d5da9ee29788a801' },
-      { label: 'Mint one-tick NFT #346421', hash: '0xfad3a17e3a3ff2f14ca7f20334e2d96a2c8877c086f32ece40b08a754db517b5' },
-      { label: 'Approve NFT #346421 to gauge', hash: '0x5cf01cc94dbda367daf254a57d15350875440a3ca8c1b6ef776b6930ae402a7c' },
-      { label: 'Stake NFT #346421', hash: '0x3aacebf5114fdb3740ecec2cf6d1e78f210951d61be2aa5164479d68d432aaf1' },
+      { label: 'Balance USDC to LFI', hash: '0x06f7aeb12fb4f3dd914b16b2e4cd813c4f6a9af0879c4bf7526a21a06c7c2ebd' },
+      { label: 'Mint one-tick NFT #346478', hash: '0xcf48690da24bfb0435e27e448bde68aabebfbd772f72d18d479ddb8f4b6e2454' },
+      { label: 'Approve NFT #346478 to gauge', hash: '0x9bf236830e5e7ac9f9b7110df59722d0a124f547c0e14bcdd4cbc7e153868fff' },
+      { label: 'Stake NFT #346478', hash: '0xacf627f833ebf405f3a90c5f3b6cc0bd8d0dc5ae3e02c57ad803592d09350581' },
     ],
   },
 ];
 
 export const positionHistory = [
+  {
+    date: '2026-05-10',
+    event: 'Exited previous Hermes NFT #346421',
+    detail: 'One-cron rebalance closed the previous managed range before entering the 2% one-tick band.',
+    tokenId: 346421n,
+    tx: '0x06f7aeb12fb4f3dd914b16b2e4cd813c4f6a9af0879c4bf7526a21a06c7c2ebd' as `0x${string}`,
+  },
+  {
+    date: '2026-05-10',
+    event: 'Entered and staked one-tick NFT #346478',
+    detail: 'Range -364200 to -364000 around tick -364153. Mint used 56,319.598745 LFI and 2.709184 USDC.',
+    tokenId: 346478n,
+    tx: '0xacf627f833ebf405f3a90c5f3b6cc0bd8d0dc5ae3e02c57ad803592d09350581' as `0x${string}`,
+  },
   {
     date: '2026-05-10',
     event: 'Exited previous Hermes NFT #346390',
