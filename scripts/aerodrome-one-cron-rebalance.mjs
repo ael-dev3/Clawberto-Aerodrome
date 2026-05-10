@@ -183,6 +183,7 @@ function roundDownTick(tick) { return Math.floor(tick / TICK_SPACING) * TICK_SPA
 function desiredRange(currentTick) { const lowerTick = roundDownTick(currentTick); return { lowerTick, upperTick: lowerTick + DESIRED_WIDTH_TICKS }; }
 function rangeState(currentTick, lowerTick, upperTick) { return currentTick < lowerTick ? 'BELOW_RANGE' : currentTick >= upperTick ? 'ABOVE_RANGE' : 'IN_RANGE'; }
 function rangeLabel(lowerTick, upperTick) { return `${lowerTick} to ${upperTick}`; }
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function ensureRunDir() { mkdirSync(RUN_DIR, { recursive: true }); }
 function stringifyJson(value) { return JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v, 2); }
 function writeJson(file, value) { writeFileSync(file, stringifyJson(value) + '\n'); }
@@ -373,7 +374,11 @@ async function exitOldPosition(tokenId) {
     const contains = await stakedContains(tokenId);
     if (!contains) throw new Error(`gauge owns #${tokenId} but depositor membership is false`);
     await simulateAndSend({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'withdraw', args: [BigInt(tokenId)], label: `Withdraw old NFT #${tokenId}` });
-    pos = await readPosition(tokenId);
+    for (let attempt = 1; attempt <= 12; attempt += 1) {
+      pos = await readPosition(tokenId);
+      if (sameAddress(pos.owner, WALLET)) break;
+      await sleep(1_500);
+    }
   }
 
   if (!sameAddress(pos.owner, WALLET)) throw new Error(`cannot manage #${tokenId}, owner=${pos.owner}`);
@@ -572,12 +577,24 @@ async function statusPayload() {
   let pos;
   let stake;
   let reward;
-  try {
-    pos = tokenId ? await readPosition(tokenId) : undefined;
-    stake = tokenId ? await stakedContains(tokenId) : undefined;
-    reward = tokenId ? await earned(tokenId) : undefined;
-  } catch (error) {
-    pos = { error: error instanceof Error ? error.message : String(error) };
+  if (tokenId) {
+    try {
+      pos = await readPosition(tokenId);
+    } catch (error) {
+      pos = { error: error instanceof Error ? error.message : String(error) };
+    }
+    try {
+      stake = await stakedContains(tokenId);
+    } catch (error) {
+      stake = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (stake === true) {
+      try {
+        reward = await earned(tokenId);
+      } catch (error) {
+        reward = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
   }
   const desired = desiredRange(pool.currentTick);
   const balances = await readBalances();
