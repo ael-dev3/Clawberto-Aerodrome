@@ -126,7 +126,7 @@ bash skills/hermes-lp-manager/scripts/hermes_heartbeat.sh
 - Align replacement ticks to tick spacing `200`.
 - Regenerate plans after every tx, revert, tick movement, reward claim, or allowance change.
 - Keep cron output deterministic: every run must write JSON and summary artifacts or fail without mutating the last good plan.
-- After any future verified enter/exit/rebalance execution, update the LP status dashboard data source and history before marking the cycle complete.
+- After any future verified enter/exit/rebalance execution, verify on-chain post-state and persist runtime JSON/state first. Dashboard/source updates are an opt-in release workflow, not a blocker for the LP control cycle.
 
 ## OpenClaw Rails
 

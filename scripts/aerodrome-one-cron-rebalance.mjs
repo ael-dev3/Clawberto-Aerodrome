@@ -25,6 +25,9 @@ const STATE_PATH = path.join(RUN_DIR, 'state.json');
 const LOCK_PATH = path.join(RUN_DIR, 'rebalance.lock');
 
 const RPC_URL = process.env.HERMES_RPC_URL || 'https://base-rpc.publicnode.com';
+const DASHBOARD_SYNC_ENABLED = process.env.HERMES_DASHBOARD_SYNC === '1';
+const INCLUDE_DASHBOARD_CANDIDATES = process.env.HERMES_INCLUDE_DASHBOARD_CANDIDATES === '1';
+const DISCOVERY_FORWARD_SCAN = Number(process.env.HERMES_DISCOVERY_FORWARD_SCAN || '250');
 const LIVE_URL = 'https://ael-dev3.github.io/Clawberto-Aerodrome/';
 const OWNER_REPO = 'ael-dev3/Clawberto-Aerodrome';
 const WALLET = '0xC979efda857823bcA9A335a6c7b62A7531e1cFEA';
@@ -251,9 +254,17 @@ async function waitTx(hash, label) {
   return receipt;
 }
 
+function bufferedGasLimit(estimatedGas) {
+  const gas = BigInt(estimatedGas);
+  if (gas <= 0n) throw new Error(`invalid gas estimate: ${estimatedGas}`);
+  return gas + gas / 2n + 25_000n;
+}
+
 async function simulateAndSend({ address, abi, functionName, args = [], value = 0n, label }) {
   const { request, result } = await publicClient.simulateContract({ account, address, abi, functionName, args, value, chain: base });
-  const hash = await walletClient.writeContract(request);
+  const estimatedGas = await publicClient.estimateContractGas({ account, address, abi, functionName, args, value });
+  const gas = bufferedGasLimit(estimatedGas);
+  const hash = await walletClient.writeContract({ ...request, gas });
   const receipt = await waitTx(hash, label);
   return { result, receipt, hash };
 }
@@ -299,19 +310,17 @@ async function earned(tokenId) {
   return publicClient.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'earned', args: [WALLET, BigInt(tokenId)] });
 }
 
-function currentManagedTokenId() {
-  const src = readFileSync(path.join(REPO, 'src', 'positions.ts'), 'utf8');
-  const match = src.match(/tokenId:\s*(\d+)n,\s*\n\s*label:\s*'Hermes[^']*'/);
-  if (!match) return undefined;
-  return Number(match[1]);
+function dashboardManagedTokenIds() {
+  try {
+    return tokenIdsFromText(readFileSync(path.join(REPO, 'src', 'positions.ts'), 'utf8'));
+  } catch {
+    return [];
+  }
 }
 
 function candidateManagedTokenIds() {
   const ids = new Set(EXTRA_TOKEN_IDS);
-  const current = currentManagedTokenId();
-  if (current) ids.add(String(current));
   for (const file of [
-    path.join(REPO, 'src', 'positions.ts'),
     STATE_PATH,
     path.join(RUN_DIR, 'launchd.out.log'),
     path.join(RUN_DIR, 'launchd.err.log'),
@@ -320,7 +329,37 @@ function candidateManagedTokenIds() {
       for (const id of tokenIdsFromText(readFileSync(file, 'utf8'))) ids.add(id);
     } catch {}
   }
+  if (INCLUDE_DASHBOARD_CANDIDATES) {
+    for (const id of dashboardManagedTokenIds()) ids.add(id);
+  }
+  const numeric = [...ids].map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0);
+  const highestKnown = numeric.length ? Math.max(...numeric) : 0;
+  const forwardScan = Math.max(0, Number.isFinite(DISCOVERY_FORWARD_SCAN) ? Math.floor(DISCOVERY_FORWARD_SCAN) : 0);
+  for (let tokenId = highestKnown + 1; tokenId <= highestKnown + forwardScan; tokenId += 1) ids.add(String(tokenId));
   return [...ids].map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0).sort((a, b) => a - b);
+}
+
+async function currentManagedTokenId(pool = undefined) {
+  const active = await discoverStakedManagedPosition(pool);
+  return active?.tokenId;
+}
+
+async function discoverStakedManagedPosition(pool = undefined) {
+  const currentPool = pool ?? await readPool();
+  const matches = [];
+  for (const tokenId of [...candidateManagedTokenIds()].reverse()) {
+    const pos = await readPositionMaybe(tokenId);
+    if (!isManagedPoolPosition(pos) || pos.liquidity <= 0n) continue;
+    if (!sameAddress(pos.owner, CONTRACTS.gauge)) continue;
+    const contains = await stakedContains(tokenId).catch(() => false);
+    if (contains !== true) continue;
+    matches.push({ tokenId, position: pos, stakedContains: contains, rangeState: rangeState(currentPool.currentTick, pos.tickLower, pos.tickUpper) });
+  }
+  return matches.sort((a, b) => {
+    if (a.rangeState === 'IN_RANGE' && b.rangeState !== 'IN_RANGE') return -1;
+    if (a.rangeState !== 'IN_RANGE' && b.rangeState === 'IN_RANGE') return 1;
+    return b.tokenId - a.tokenId;
+  })[0];
 }
 
 async function readPositionMaybe(tokenId) {
@@ -708,41 +747,52 @@ function commitAndPush(newTokenId) {
   return { committed: true, sha, runId };
 }
 
+function syncDashboardIfEnabled({ oldTokenId, newTokenId, lowerTick, upperTick, currentTick, used0, used1, cycleTxs }) {
+  if (!DASHBOARD_SYNC_ENABLED) {
+    return { enabled: false, skipped: 'dashboard/GitHub sync disabled; set HERMES_DASHBOARD_SYNC=1 for a release sync' };
+  }
+  updatePositionsTs({ oldTokenId, newTokenId, lowerTick, upperTick, currentTick, used0, used1, cycleTxs });
+  return { enabled: true, ...commitAndPush(newTokenId) };
+}
+
 async function statusPayload() {
   const pool = await readPool();
-  const tokenId = currentManagedTokenId();
-  let pos;
-  let stake;
+  const discovery = await discoverStakedManagedPosition(pool);
+  const tokenId = discovery?.tokenId;
   let reward;
-  if (tokenId) {
+  if (tokenId && discovery.stakedContains === true) {
     try {
-      pos = await readPosition(tokenId);
+      reward = await earned(tokenId);
     } catch (error) {
-      pos = { error: error instanceof Error ? error.message : String(error) };
-    }
-    try {
-      stake = await stakedContains(tokenId);
-    } catch (error) {
-      stake = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
-    }
-    if (stake === true) {
-      try {
-        reward = await earned(tokenId);
-      } catch (error) {
-        reward = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
-      }
+      reward = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
   const desired = desiredRange(pool.currentTick);
   const balances = await readBalances();
-  return { at: nowIso(), chainId: CHAIN_ID, tokenId, pool, desired, position: pos, stakedContains: stake, earned: reward, balances };
+  return {
+    at: nowIso(),
+    chainId: CHAIN_ID,
+    tokenId,
+    discovery: {
+      mode: 'runtime-onchain',
+      candidateCount: candidateManagedTokenIds().length,
+      dashboardCandidatesIncluded: INCLUDE_DASHBOARD_CANDIDATES,
+      forwardScan: DISCOVERY_FORWARD_SCAN,
+    },
+    pool,
+    desired,
+    position: discovery?.position,
+    stakedContains: discovery?.stakedContains,
+    earned: reward,
+    balances,
+  };
 }
 
 async function rebalance(reason) {
   initSigner();
   txs = [];
-  const oldTokenId = currentManagedTokenId();
   const stateBefore = await statusPayload();
+  const oldTokenId = stateBefore.tokenId;
   const cleanup = await cleanupOrphanPositions(oldTokenId);
 
   if (oldTokenId) await exitOldPosition(oldTokenId);
@@ -761,8 +811,7 @@ async function rebalance(reason) {
   }
 
   const mint = await mintAndStake(target.lowerTick, target.upperTick);
-  updatePositionsTs({ oldTokenId, newTokenId: mint.newTokenId, lowerTick: target.lowerTick, upperTick: target.upperTick, currentTick: planningPool.currentTick, used0: mint.used0, used1: mint.used1, cycleTxs: txs });
-  const repo = commitAndPush(mint.newTokenId);
+  const repo = syncDashboardIfEnabled({ oldTokenId, newTokenId: mint.newTokenId, lowerTick: target.lowerTick, upperTick: target.upperTick, currentTick: planningPool.currentTick, used0: mint.used0, used1: mint.used1, cycleTxs: txs });
   const stateAfter = await statusPayload();
   const result = {
     status: 'REBALANCED',

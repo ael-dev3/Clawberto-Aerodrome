@@ -34,13 +34,13 @@ Transaction-intent plans are instructions, not proof of execution. They may incl
 
 The repository also contains `scripts/aerodrome-one-cron-rebalance.mjs`, a user-approved signer-backed executor for the managed CL200-LFI/USDC wallet. When `HERMES_LP_EXECUTE=1` is set by the launchd wrapper, it is allowed to broadcast only after the same gates above pass. It must additionally:
 
-- discover managed token ids from `src/positions.ts`, `runs/aerodrome-one-cron/state.json`, launchd logs, and `HERMES_EXTRA_TOKEN_IDS`, not just the dashboard's current token id
+- discover managed token ids from runtime state, launchd logs, `HERMES_EXTRA_TOKEN_IDS`, and bounded on-chain candidate scans; include dashboard IDs only when `HERMES_INCLUDE_DASHBOARD_CANDIDATES=1`
 - close wallet-owned or gauge-owned out-of-range leftovers before minting a replacement
 - persist a freshly minted token id before trying to approve/stake it, so a failed stake cannot become an invisible orphan
 - re-read `slot0` immediately before gauge deposit; if the fresh one-tick NFT moved out of range, close it instead of leaving it unstaked
 - apply `HERMES_REBALANCE_COOLDOWN_SECONDS` to range-churn rebalances while still allowing stake-remediation and orphan-cleanup actions
 - reject dust mints below `HERMES_MIN_POSITION_USD`
-- update `src/positions.ts`, run tests/build, commit, push, and verify Pages after every executed LP state change
+- keep LP uptime/profitability as the hot-path priority. The 30-second loop must not run git pull/rebase, tests/build, commits, pushes, or Pages verification. Dashboard/source sync is a separate opt-in release action enabled only with `HERMES_DASHBOARD_SYNC=1`.
 
 For principal rebalances, use this order:
 

@@ -38,10 +38,10 @@ Use this skill for deterministic Aerodrome discovery and pool quality analysis o
 - Token0 LFI: `0x3722264aB15a1dfCe5a5af89e6547F7949A8ABA3` (18 decimals)
 - Token1 USDC: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (6 decimals)
 - Tick spacing: `200`; fee: `10000` = 1% (1e6 denominator)
-- Current Hermes-managed NFT: `341439`
-- Reference/tracked existing NFT: `341002`
+- Runtime Hermes-managed NFT: discover from on-chain state, runtime state/logs, explicit `HERMES_EXTRA_TOKEN_IDS`, and bounded candidate scans; do not trust a hardcoded token id.
+- Reference/tracked historical NFT: `341002`
 - Live dashboard: `https://ael-dev3.github.io/Clawberto-Aerodrome/`
-- Dashboard source of truth: `src/positions.ts`
+- Dashboard data source: `src/positions.ts` for optional release sync only; it is not the LP-control source of truth.
 - Dashboard presentation contract: keep the LP range console first, no marketing hero, embed the live GeckoTerminal candle/range chart in the first panel, show the current Hermes-managed NFT as the primary active card, and collapse unreadable reference/watchlist NFTs into LP history diagnostics instead of noisy active error cards.
 - Full LP management notes: `references/cl-lfi-usdc-lp-management.md`
 
@@ -125,7 +125,7 @@ Weak-LLM-safe gates copied from the Kittenswap control plane:
 4. Remove old liquidity in fixed order: `collect -> decreaseLiquidity -> collect`; `burn` only with explicit close intent after liquidity and owed tokens are zero.
 5. Mint replacement CL positions through `NonfungiblePositionManager.mint((address,address,int24,int24,int24,uint256,uint256,uint256,uint256,address,uint256,uint160))`, with token order normalized, ticks aligned to `200`, ERC20 approvals targeting the NFT manager, and fresh direct simulation before signing.
 6. Post-mint managed strategy defaults to immediate gauge staking: approve NFT to gauge, `deposit(uint256)`, then verify `ownerOf(tokenId) == gauge` and `stakedContains(depositor, tokenId)`.
-7. Every LP enter/exit/rebalance must update `src/positions.ts`, position history, and the hosted GitHub Pages dashboard before reporting completion.
+7. Every LP enter/exit/rebalance must verify on-chain post-state and persist runtime state before reporting LP-control completion. `src/positions.ts`, position-history, and GitHub Pages updates are opt-in release/dashboard sync work, not the 30-second hot path.
 8. All execution support remains plan/verification-first. Do not claim an on-chain action was executed unless a signed tx hash is verified.
 
 ## Output
@@ -179,7 +179,7 @@ Use this before large scans if you want stable contract manifests in CI.
 5. In strict mode, the run fails on non-finite APR/safety values or invalid totals.
 6. Every output must include explicit reasons for risky pools.
 7. For CL min-unstake pools, never use classic pool ABI assumptions: use `getPool(address,address,int24)`, 6-field `slot0`, and the CL NFT/gauge staking model documented in `references/cl-lfi-usdc-lp-management.md`.
-8. For managed LP changes, the dashboard must stay in sync: update `src/positions.ts`, rebuild/test, push, and verify `https://ael-dev3.github.io/Clawberto-Aerodrome/`.
+8. For managed LP changes, keep the executor focused on LP uptime/profitability. Dashboard sync may update `src/positions.ts`, rebuild/test, push, and verify `https://ael-dev3.github.io/Clawberto-Aerodrome/` only when explicitly requested or `HERMES_DASHBOARD_SYNC=1` is set.
 
 ## Operational controls
 

@@ -7,10 +7,10 @@ Live pool requested by Ael:
 - Pool: `0x8343c68279587498526114e6385f0a87f248e0d9`
 - Gauge: `0xe9c73937382c621770f5b7018a407c0749df6aae`
 - Position NFT manager: `0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53`
-- Current Hermes-managed NFT: `341439`
-- Reference/tracked existing NFT: `341002`
+- Runtime Hermes-managed NFT: discover from on-chain state, runtime state/logs, explicit `HERMES_EXTRA_TOKEN_IDS`, and bounded candidate scans; do not trust a hardcoded token id.
+- Reference/tracked historical NFT: `341002`
 - Live dashboard: `https://ael-dev3.github.io/Clawberto-Aerodrome/`
-- Dashboard source of truth: `src/positions.ts`
+- Dashboard data source: `src/positions.ts` for optional release sync only; it is not the LP-control source of truth.
 
 This is a Slipstream/CL min-unstake deployment, not a classic volatile/stable Aerodrome pair. Do not use `getPool(token0, token1, bool stable)` for this pool. Use CL tick spacing (`int24`) paths.
 
@@ -74,14 +74,14 @@ NFT `341439` on `0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53`:
 - Range: tickLower `-373000`, tickUpper `-361800`; staked when `ownerOf(341439) == gauge`.
 - Initial mint amounts: `9731.554156611989780999` LFI and `2.000000` USDC.
 
-## Dashboard update requirement
+## Dashboard sync policy
 
-Every managed LP enter, exit, rebalance, claim, or no-position transition must update the public dashboard before reporting completion:
+Every managed LP enter, exit, rebalance, claim, or no-position transition must verify on-chain post-state and persist runtime state before LP-control completion. The public dashboard is optional release sync, not the 30-second control-loop source of truth:
 
-1. Update `src/positions.ts` with the new active position set and history entry.
-2. Run `npm test && npm run build`.
-3. Commit and push to `main`; GitHub Actions deploys Pages from `dist`.
-4. Verify `https://ael-dev3.github.io/Clawberto-Aerodrome/` loads and renders live Base RPC data without console errors.
+1. Keep active LP discovery based on chain/runtime state, not hardcoded dashboard data.
+2. Leave `HERMES_DASHBOARD_SYNC=0` in the hot path unless a dashboard release is explicitly requested.
+3. When dashboard sync is enabled, update `src/positions.ts` with the new active position set/history, run `npm test && npm run build`, commit/push to `main`, and verify `https://ael-dev3.github.io/Clawberto-Aerodrome/` loads without console errors.
+4. Do not block stake remediation, orphan cleanup, or profitable rebalancing on GitHub/Pages work.
 
 ## Critical staking model
 
@@ -248,7 +248,7 @@ Observed failure mode from the aggressive 30s one-tick run:
 
 Workflow rules added from this incident:
 
-1. Do not trust only `src/positions.ts` for cleanup. Build a candidate set from `src/positions.ts`, `runs/aerodrome-one-cron/state.json`, launchd logs, and `HERMES_EXTRA_TOKEN_IDS`.
+1. Do not trust only `src/positions.ts` for cleanup. Build the default candidate set from runtime state, launchd logs, `HERMES_EXTRA_TOKEN_IDS`, and bounded discovery scans; include dashboard records only when `HERMES_INCLUDE_DASHBOARD_CANDIDATES=1`.
 2. Failed mints must be persisted before approve/deposit. If stake fails or the tick moves out before deposit, close the fresh wallet-owned NFT immediately or persist it for next-cycle cleanup.
 3. Re-read `slot0` immediately before gauge `deposit`. One-tick CL200 ranges can move out of range between mint and stake.
 4. For wallet-owned out-of-range leftovers with `tokensOwed0 == tokensOwed1 == 0`, the successful close path was `decreaseLiquidity -> collect -> burn`; collect-first is still valid when owed fees are already nonzero, but a collect-only tx can waste gas if there is nothing currently owed.
@@ -257,8 +257,8 @@ Workflow rules added from this incident:
 7. If a recovered wallet-owned NFT is still in range and has liquidity, stake it instead of leaving it as an unstaked active-range orphan; then display it on the dashboard.
 8. Mint with a small ERC-20 balance haircut instead of exact full wallet balances; exact-full-balance mints can revert `STF` after volatile swaps even when allowance looks sufficient.
 9. For volatile LFI/USDC balance swaps, expose `HERMES_SLIPPAGE_BPS`; 5% was too tight during the live repair, while 20% let the retry proceed.
-10. A verified on-chain LP change is not complete until `src/positions.ts` is updated, tests/build pass, the commit is pushed, Pages deploys, and the live dashboard renders the new state.
-11. If GitHub push is rejected because remote moved, resolve the rebase before reporting completion. On-chain success with an unpushed dashboard is incomplete.
+10. A verified on-chain LP-control change is complete when post-state and runtime artifacts are verified. Dashboard/GitHub/Pages sync is a separate release completion gate only when explicitly enabled.
+11. If an optional dashboard release is enabled and GitHub push is rejected because remote moved, resolve the rebase before reporting the dashboard release complete.
 ## Hard failure rules
 
 - Do not operate from truncated addresses.
