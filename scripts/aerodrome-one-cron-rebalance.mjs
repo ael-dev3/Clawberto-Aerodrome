@@ -1,0 +1,672 @@
+#!/usr/bin/env node
+import { execFileSync, execSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import {
+  concatHex,
+  createPublicClient,
+  createWalletClient,
+  formatEther,
+  formatUnits,
+  http,
+  maxUint256,
+  numberToHex,
+  parseEventLogs,
+} from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { base } from 'viem/chains';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO = path.resolve(__dirname, '..');
+const RUN_DIR = path.join(REPO, 'runs', 'aerodrome-one-cron');
+const STATE_PATH = path.join(RUN_DIR, 'state.json');
+const LOCK_PATH = path.join(RUN_DIR, 'rebalance.lock');
+
+const RPC_URL = process.env.HERMES_RPC_URL || 'https://base-rpc.publicnode.com';
+const LIVE_URL = 'https://ael-dev3.github.io/Clawberto-Aerodrome/';
+const OWNER_REPO = 'ael-dev3/Clawberto-Aerodrome';
+const WALLET = '0xC979efda857823bcA9A335a6c7b62A7531e1cFEA';
+const KEYCHAIN_SERVICE = 'Hermes Farcaster Wallet';
+const CHAIN_ID = 8453;
+
+const CONTRACTS = {
+  pool: '0x8343c68279587498526114e6385f0a87f248e0d9',
+  gauge: '0xE9C73937382C621770f5b7018A407C0749df6aaE',
+  nftManager: '0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53',
+  router: '0x698Cb2b6dd822994581fEa6eA4Fc755d1363A92F',
+  lfi: '0x3722264aB15a1dfCe5a5af89e6547F7949A8ABA3',
+  usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  weth: '0x4200000000000000000000000000000000000006',
+};
+
+const TICK_SPACING = 200;
+const DESIRED_WIDTH_TICKS = 200;
+const SLIPPAGE_BPS = 500n;
+const ETH_GAS_RESERVE_WEI = 1_500_000_000_000_000n; // ~a few USD on Base while leaving room for burst txs.
+const MIN_ETH_SWAP_WEI = 50_000_000_000_000n;
+const MIN_REBALANCE_USD = 0.15;
+const MAX_UINT128 = (1n << 128n) - 1n;
+const ZERO = '0x0000000000000000000000000000000000000000';
+
+const erc20Abi = [
+  { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'allowance', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }] },
+];
+
+const poolAbi = [
+  {
+    type: 'function', name: 'slot0', stateMutability: 'view', inputs: [],
+    outputs: [
+      { name: 'sqrtPriceX96', type: 'uint160' },
+      { name: 'tick', type: 'int24' },
+      { name: 'observationIndex', type: 'uint16' },
+      { name: 'observationCardinality', type: 'uint16' },
+      { name: 'observationCardinalityNext', type: 'uint16' },
+      { name: 'unlocked', type: 'bool' },
+    ],
+  },
+];
+
+const gaugeAbi = [
+  { type: 'function', name: 'withdraw', stateMutability: 'nonpayable', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'deposit', stateMutability: 'nonpayable', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [] },
+  { type: 'function', name: 'stakedContains', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }, { name: 'tokenId', type: 'uint256' }], outputs: [{ type: 'bool' }] },
+  { type: 'function', name: 'earned', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }, { name: 'tokenId', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
+];
+
+const nftManagerAbi = [
+  { type: 'function', name: 'ownerOf', stateMutability: 'view', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [{ type: 'address' }] },
+  { type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'tokenId', type: 'uint256' }], outputs: [] },
+  {
+    type: 'function', name: 'positions', stateMutability: 'view', inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [
+      { name: 'nonce', type: 'uint96' },
+      { name: 'operator', type: 'address' },
+      { name: 'token0', type: 'address' },
+      { name: 'token1', type: 'address' },
+      { name: 'tickSpacing', type: 'int24' },
+      { name: 'tickLower', type: 'int24' },
+      { name: 'tickUpper', type: 'int24' },
+      { name: 'liquidity', type: 'uint128' },
+      { name: 'feeGrowthInside0LastX128', type: 'uint256' },
+      { name: 'feeGrowthInside1LastX128', type: 'uint256' },
+      { name: 'tokensOwed0', type: 'uint128' },
+      { name: 'tokensOwed1', type: 'uint128' },
+    ],
+  },
+  {
+    type: 'function', name: 'collect', stateMutability: 'payable',
+    inputs: [{
+      components: [
+        { name: 'tokenId', type: 'uint256' },
+        { name: 'recipient', type: 'address' },
+        { name: 'amount0Max', type: 'uint128' },
+        { name: 'amount1Max', type: 'uint128' },
+      ], name: 'params', type: 'tuple',
+    }],
+    outputs: [{ name: 'amount0', type: 'uint256' }, { name: 'amount1', type: 'uint256' }],
+  },
+  {
+    type: 'function', name: 'decreaseLiquidity', stateMutability: 'payable',
+    inputs: [{
+      components: [
+        { name: 'tokenId', type: 'uint256' },
+        { name: 'liquidity', type: 'uint128' },
+        { name: 'amount0Min', type: 'uint256' },
+        { name: 'amount1Min', type: 'uint256' },
+        { name: 'deadline', type: 'uint256' },
+      ], name: 'params', type: 'tuple',
+    }],
+    outputs: [{ name: 'amount0', type: 'uint256' }, { name: 'amount1', type: 'uint256' }],
+  },
+  { type: 'function', name: 'burn', stateMutability: 'payable', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [] },
+  {
+    type: 'function', name: 'mint', stateMutability: 'payable',
+    inputs: [{
+      components: [
+        { name: 'token0', type: 'address' },
+        { name: 'token1', type: 'address' },
+        { name: 'tickSpacing', type: 'int24' },
+        { name: 'tickLower', type: 'int24' },
+        { name: 'tickUpper', type: 'int24' },
+        { name: 'amount0Desired', type: 'uint256' },
+        { name: 'amount1Desired', type: 'uint256' },
+        { name: 'amount0Min', type: 'uint256' },
+        { name: 'amount1Min', type: 'uint256' },
+        { name: 'recipient', type: 'address' },
+        { name: 'deadline', type: 'uint256' },
+        { name: 'sqrtPriceX96', type: 'uint160' },
+      ], name: 'params', type: 'tuple',
+    }],
+    outputs: [
+      { name: 'tokenId', type: 'uint256' },
+      { name: 'liquidity', type: 'uint128' },
+      { name: 'amount0', type: 'uint256' },
+      { name: 'amount1', type: 'uint256' },
+    ],
+  },
+  { type: 'event', name: 'Transfer', anonymous: false, inputs: [{ indexed: true, name: 'from', type: 'address' }, { indexed: true, name: 'to', type: 'address' }, { indexed: true, name: 'tokenId', type: 'uint256' }] },
+];
+
+const routerAbi = [
+  {
+    type: 'function', name: 'exactInput', stateMutability: 'payable',
+    inputs: [{
+      components: [
+        { name: 'path', type: 'bytes' },
+        { name: 'recipient', type: 'address' },
+        { name: 'deadline', type: 'uint256' },
+        { name: 'amountIn', type: 'uint256' },
+        { name: 'amountOutMinimum', type: 'uint256' },
+      ], name: 'params', type: 'tuple',
+    }],
+    outputs: [{ name: 'amountOut', type: 'uint256' }],
+  },
+];
+
+const publicClient = createPublicClient({ chain: base, transport: http(RPC_URL, { timeout: 15_000 }) });
+let account;
+let walletClient;
+let txs = [];
+
+function nowIso() { return new Date().toISOString(); }
+function unixDeadline(minutes = 10) { return BigInt(Math.floor(Date.now() / 1000) + minutes * 60); }
+function sameAddress(a, b) { return a?.toLowerCase() === b?.toLowerCase(); }
+function tickPrice(tick) { return Math.pow(1.0001, tick) * 1e12; }
+function fmt(raw, decimals, digits = 6) { return Number(formatUnits(raw, decimals)).toLocaleString('en-US', { maximumFractionDigits: digits }); }
+function usd(n) { return `$${Number(n).toFixed(4)}`; }
+function slippageMin(amount, bps = SLIPPAGE_BPS) { return amount <= 0n ? 0n : (amount * (10_000n - bps)) / 10_000n; }
+function roundDownTick(tick) { return Math.floor(tick / TICK_SPACING) * TICK_SPACING; }
+function desiredRange(currentTick) { const lowerTick = roundDownTick(currentTick); return { lowerTick, upperTick: lowerTick + DESIRED_WIDTH_TICKS }; }
+function rangeState(currentTick, lowerTick, upperTick) { return currentTick < lowerTick ? 'BELOW_RANGE' : currentTick >= upperTick ? 'ABOVE_RANGE' : 'IN_RANGE'; }
+function rangeLabel(lowerTick, upperTick) { return `${lowerTick} to ${upperTick}`; }
+function ensureRunDir() { mkdirSync(RUN_DIR, { recursive: true }); }
+function stringifyJson(value) { return JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v, 2); }
+function writeJson(file, value) { writeFileSync(file, stringifyJson(value) + '\n'); }
+function readJson(file, fallback) { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return fallback; } }
+function run(cmd, opts = {}) { return execSync(cmd, { cwd: REPO, encoding: 'utf8', stdio: opts.stdio || 'pipe', env: { ...process.env, ...opts.env } }); }
+
+function acquireLock() {
+  ensureRunDir();
+  if (existsSync(LOCK_PATH)) {
+    const lock = readJson(LOCK_PATH, {});
+    const ageMs = Date.now() - Date.parse(lock.at || 0);
+    if (ageMs < 10 * 60 * 1000) {
+      console.log(stringifyJson({ status: 'LOCKED', lock }));
+      process.exit(0);
+    }
+  }
+  writeJson(LOCK_PATH, { at: nowIso(), pid: process.pid });
+}
+
+function releaseLock() {
+  try { unlinkSync(LOCK_PATH); } catch {}
+}
+
+function loadPrivateKey() {
+  const envKey = process.env.HERMES_PRIVATE_KEY?.trim();
+  if (envKey) return envKey.startsWith('0x') ? envKey : `0x${envKey}`;
+  const key = execFileSync('security', ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', WALLET, '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  if (!key) throw new Error('missing keychain private key');
+  return key.startsWith('0x') ? key : `0x${key}`;
+}
+
+function initSigner() {
+  const privateKey = loadPrivateKey();
+  account = privateKeyToAccount(privateKey);
+  if (!sameAddress(account.address, WALLET)) throw new Error(`keychain account mismatch: ${account.address}`);
+  walletClient = createWalletClient({ account, chain: base, transport: http(RPC_URL, { timeout: 15_000 }) });
+}
+
+function encodePath(tokens, tickSpacings) {
+  if (tokens.length !== tickSpacings.length + 1) throw new Error('bad path shape');
+  const parts = [tokens[0]];
+  for (let i = 0; i < tickSpacings.length; i += 1) {
+    parts.push(numberToHex(tickSpacings[i], { size: 3 }));
+    parts.push(tokens[i + 1]);
+  }
+  return concatHex(parts);
+}
+
+async function waitTx(hash, label) {
+  const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1, timeout: 180_000 });
+  if (receipt.status !== 'success') throw new Error(`${label} reverted: ${hash}`);
+  txs.push({ label, hash });
+  console.log(`${label}: ${hash}`);
+  return receipt;
+}
+
+async function simulateAndSend({ address, abi, functionName, args = [], value = 0n, label }) {
+  const { request, result } = await publicClient.simulateContract({ account, address, abi, functionName, args, value, chain: base });
+  const hash = await walletClient.writeContract(request);
+  const receipt = await waitTx(hash, label);
+  return { result, receipt, hash };
+}
+
+async function readPool() {
+  const slot0 = await publicClient.readContract({ address: CONTRACTS.pool, abi: poolAbi, functionName: 'slot0' });
+  return { sqrtPriceX96: slot0[0], currentTick: Number(slot0[1]), unlocked: slot0[5] };
+}
+
+async function readBalances() {
+  const [eth, lfi, usdc] = await Promise.all([
+    publicClient.getBalance({ address: WALLET }),
+    publicClient.readContract({ address: CONTRACTS.lfi, abi: erc20Abi, functionName: 'balanceOf', args: [WALLET] }),
+    publicClient.readContract({ address: CONTRACTS.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [WALLET] }),
+  ]);
+  return { eth, lfi, usdc };
+}
+
+async function readPosition(tokenId) {
+  const [owner, p] = await Promise.all([
+    publicClient.readContract({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'ownerOf', args: [BigInt(tokenId)] }),
+    publicClient.readContract({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'positions', args: [BigInt(tokenId)] }),
+  ]);
+  return {
+    tokenId: BigInt(tokenId),
+    owner,
+    token0: p[2],
+    token1: p[3],
+    tickSpacing: Number(p[4]),
+    tickLower: Number(p[5]),
+    tickUpper: Number(p[6]),
+    liquidity: p[7],
+    tokensOwed0: p[10],
+    tokensOwed1: p[11],
+  };
+}
+
+async function stakedContains(tokenId) {
+  return publicClient.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'stakedContains', args: [WALLET, BigInt(tokenId)] });
+}
+
+async function earned(tokenId) {
+  return publicClient.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'earned', args: [WALLET, BigInt(tokenId)] });
+}
+
+function currentManagedTokenId() {
+  const src = readFileSync(path.join(REPO, 'src', 'positions.ts'), 'utf8');
+  const match = src.match(/tokenId:\s*(\d+)n,\s*\n\s*label:\s*'Hermes[^']*'/);
+  if (!match) return undefined;
+  return Number(match[1]);
+}
+
+async function ensureAllowance(token, spender, amount, symbol, labelPrefix = 'Approve') {
+  const allowance = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'allowance', args: [WALLET, spender] });
+  if (allowance >= amount) return;
+  await simulateAndSend({
+    address: token,
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [spender, maxUint256],
+    label: `${labelPrefix} ${symbol}`,
+  });
+}
+
+async function quoteExactInput(pathBytes, amountIn, value = 0n) {
+  const params = { path: pathBytes, recipient: WALLET, deadline: unixDeadline(), amountIn, amountOutMinimum: 0n };
+  const { result } = await publicClient.simulateContract({ account, address: CONTRACTS.router, abi: routerAbi, functionName: 'exactInput', args: [params], value, chain: base });
+  return result;
+}
+
+async function swapExactInput(pathBytes, amountIn, minOut, value, label) {
+  const params = { path: pathBytes, recipient: WALLET, deadline: unixDeadline(), amountIn, amountOutMinimum: minOut };
+  const { result } = await simulateAndSend({ address: CONTRACTS.router, abi: routerAbi, functionName: 'exactInput', args: [params], value, label });
+  return result;
+}
+
+async function bestWethUsdcPath(amountIn) {
+  const candidates = [1, 50];
+  const quotes = [];
+  for (const spacing of candidates) {
+    const p = encodePath([CONTRACTS.weth, CONTRACTS.usdc], [spacing]);
+    try {
+      const out = await quoteExactInput(p, amountIn, amountIn);
+      quotes.push({ spacing, path: p, out });
+    } catch (error) {
+      quotes.push({ spacing, error: error instanceof Error ? error.message : String(error), out: 0n });
+    }
+  }
+  quotes.sort((a, b) => (a.out > b.out ? -1 : a.out < b.out ? 1 : 0));
+  if (!quotes[0]?.out) throw new Error(`no WETH/USDC route: ${JSON.stringify(quotes)}`);
+  return quotes[0];
+}
+
+function unitRangeFractions(currentTick, lowerTick, upperTick) {
+  const L = 1_000_000_000_000_000;
+  const sqrtLower = Math.pow(1.0001, lowerTick / 2);
+  const sqrtUpper = Math.pow(1.0001, upperTick / 2);
+  const sqrtCurrent = Math.pow(1.0001, currentTick / 2);
+  const sqrtPrice = Math.max(sqrtLower, Math.min(sqrtCurrent, sqrtUpper));
+  let token0Raw = 0;
+  let token1Raw = 0;
+  if (currentTick < lowerTick) token0Raw = L * (sqrtUpper - sqrtLower) / (sqrtLower * sqrtUpper);
+  else if (currentTick >= upperTick) token1Raw = L * (sqrtUpper - sqrtLower);
+  else {
+    token0Raw = L * (sqrtUpper - sqrtPrice) / (sqrtPrice * sqrtUpper);
+    token1Raw = L * (sqrtPrice - sqrtLower);
+  }
+  const price = tickPrice(currentTick);
+  const token0Usd = (token0Raw / 1e18) * price;
+  const token1Usd = token1Raw / 1e6;
+  const total = token0Usd + token1Usd;
+  return total > 0 ? { lfiFrac: token0Usd / total, usdcFrac: token1Usd / total } : { lfiFrac: 0.5, usdcFrac: 0.5 };
+}
+
+async function exitOldPosition(tokenId) {
+  let pos;
+  try {
+    pos = await readPosition(tokenId);
+  } catch (error) {
+    console.log(`old position #${tokenId} unreadable/skipped: ${error instanceof Error ? error.message : String(error)}`);
+    return { exited: false, burned: false };
+  }
+
+  if (!sameAddress(pos.token0, CONTRACTS.lfi) || !sameAddress(pos.token1, CONTRACTS.usdc) || pos.tickSpacing !== TICK_SPACING) {
+    throw new Error(`position identity mismatch for #${tokenId}`);
+  }
+
+  if (sameAddress(pos.owner, CONTRACTS.gauge)) {
+    const contains = await stakedContains(tokenId);
+    if (!contains) throw new Error(`gauge owns #${tokenId} but depositor membership is false`);
+    await simulateAndSend({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'withdraw', args: [BigInt(tokenId)], label: `Withdraw old NFT #${tokenId}` });
+    pos = await readPosition(tokenId);
+  }
+
+  if (!sameAddress(pos.owner, WALLET)) throw new Error(`cannot manage #${tokenId}, owner=${pos.owner}`);
+
+  await simulateAndSend({
+    address: CONTRACTS.nftManager,
+    abi: nftManagerAbi,
+    functionName: 'collect',
+    args: [{ tokenId: BigInt(tokenId), recipient: WALLET, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
+    label: `Collect old NFT #${tokenId}`,
+  });
+
+  pos = await readPosition(tokenId);
+  if (pos.liquidity > 0n) {
+    await simulateAndSend({
+      address: CONTRACTS.nftManager,
+      abi: nftManagerAbi,
+      functionName: 'decreaseLiquidity',
+      args: [{ tokenId: BigInt(tokenId), liquidity: pos.liquidity, amount0Min: 0n, amount1Min: 0n, deadline: unixDeadline() }],
+      label: `Decrease old NFT #${tokenId}`,
+    });
+    await simulateAndSend({
+      address: CONTRACTS.nftManager,
+      abi: nftManagerAbi,
+      functionName: 'collect',
+      args: [{ tokenId: BigInt(tokenId), recipient: WALLET, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
+      label: `Final collect old NFT #${tokenId}`,
+    });
+  }
+
+  let burned = false;
+  try {
+    const after = await readPosition(tokenId);
+    if (after.liquidity === 0n && after.tokensOwed0 === 0n && after.tokensOwed1 === 0n) {
+      await simulateAndSend({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'burn', args: [BigInt(tokenId)], label: `Burn old NFT #${tokenId}` });
+      burned = true;
+    }
+  } catch (error) {
+    console.log(`burn skipped for #${tokenId}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return { exited: true, burned };
+}
+
+async function convertEthExcessToUsdc() {
+  const balances = await readBalances();
+  if (balances.eth <= ETH_GAS_RESERVE_WEI + MIN_ETH_SWAP_WEI) return { spentEth: 0n, usdcOut: 0n };
+  const spend = balances.eth - ETH_GAS_RESERVE_WEI;
+  const route = await bestWethUsdcPath(spend);
+  const minOut = slippageMin(route.out);
+  const out = await swapExactInput(route.path, spend, minOut, spend, `Swap ETH to USDC via WETH/USDC-${route.spacing}`);
+  return { spentEth: spend, usdcOut: out, spacing: route.spacing };
+}
+
+async function balanceInventoryToRange(currentTick, lowerTick, upperTick) {
+  const balances = await readBalances();
+  const price = tickPrice(currentTick);
+  const lfi = Number(formatUnits(balances.lfi, 18));
+  const usdc = Number(formatUnits(balances.usdc, 6));
+  const currentLfiUsd = lfi * price;
+  const totalUsd = currentLfiUsd + usdc;
+  const fractions = unitRangeFractions(currentTick, lowerTick, upperTick);
+  const targetLfiUsd = totalUsd * fractions.lfiFrac;
+  const diffUsd = targetLfiUsd - currentLfiUsd;
+
+  if (Math.abs(diffUsd) < MIN_REBALANCE_USD) return { action: 'balanced', totalUsd, currentLfiUsd, targetLfiUsd, fractions };
+
+  if (diffUsd > 0) {
+    const spendUsdc = BigInt(Math.max(0, Math.floor(Math.min(diffUsd * 1.02, usdc) * 1e6)));
+    if (spendUsdc > 10_000n) {
+      await ensureAllowance(CONTRACTS.usdc, CONTRACTS.router, spendUsdc, 'USDC', 'Approve router');
+      const p = encodePath([CONTRACTS.usdc, CONTRACTS.lfi], [TICK_SPACING]);
+      const quote = await quoteExactInput(p, spendUsdc);
+      await swapExactInput(p, spendUsdc, slippageMin(quote), 0n, 'Balance USDC to LFI');
+      return { action: 'bought_lfi', spendUsdc: spendUsdc.toString(), quoteLfi: quote.toString(), totalUsd, currentLfiUsd, targetLfiUsd, fractions };
+    }
+  } else {
+    const sellLfiHuman = Math.min((-diffUsd / price) * 1.02, lfi);
+    const sellLfi = BigInt(Math.max(0, Math.floor(sellLfiHuman * 1e18)));
+    if (sellLfi > 10_000_000_000_000_000n) {
+      await ensureAllowance(CONTRACTS.lfi, CONTRACTS.router, sellLfi, 'LFI', 'Approve router');
+      const p = encodePath([CONTRACTS.lfi, CONTRACTS.usdc], [TICK_SPACING]);
+      const quote = await quoteExactInput(p, sellLfi);
+      await swapExactInput(p, sellLfi, slippageMin(quote), 0n, 'Balance LFI to USDC');
+      return { action: 'sold_lfi', sellLfi: sellLfi.toString(), quoteUsdc: quote.toString(), totalUsd, currentLfiUsd, targetLfiUsd, fractions };
+    }
+  }
+
+  return { action: 'balance_skip_small', totalUsd, currentLfiUsd, targetLfiUsd, fractions };
+}
+
+async function mintAndStake(lowerTick, upperTick) {
+  let before = await readBalances();
+  const amount0Desired = before.lfi;
+  const amount1Desired = before.usdc;
+  if (amount0Desired === 0n || amount1Desired === 0n) throw new Error(`insufficient mint inventory lfi=${amount0Desired} usdc=${amount1Desired}`);
+
+  await ensureAllowance(CONTRACTS.lfi, CONTRACTS.nftManager, amount0Desired, 'LFI', 'Approve NPM');
+  await ensureAllowance(CONTRACTS.usdc, CONTRACTS.nftManager, amount1Desired, 'USDC', 'Approve NPM');
+
+  const baseParams = {
+    token0: CONTRACTS.lfi,
+    token1: CONTRACTS.usdc,
+    tickSpacing: TICK_SPACING,
+    tickLower: lowerTick,
+    tickUpper: upperTick,
+    amount0Desired,
+    amount1Desired,
+    amount0Min: 0n,
+    amount1Min: 0n,
+    recipient: WALLET,
+    deadline: unixDeadline(),
+    sqrtPriceX96: 0n,
+  };
+  const sim = await publicClient.simulateContract({ account, address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'mint', args: [baseParams], chain: base });
+  const [simTokenId, simLiquidity, simAmount0, simAmount1] = sim.result;
+  if (simLiquidity === 0n || simAmount0 === 0n || simAmount1 === 0n) throw new Error(`mint sim produced zero liquidity/amounts: ${sim.result}`);
+
+  const params = { ...baseParams, amount0Min: slippageMin(simAmount0), amount1Min: slippageMin(simAmount1), deadline: unixDeadline() };
+  const { receipt, hash } = await simulateAndSend({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'mint', args: [params], label: `Mint one-tick NFT sim#${simTokenId}` });
+  const transferLogs = parseEventLogs({ abi: nftManagerAbi, logs: receipt.logs, eventName: 'Transfer', strict: false });
+  const mintLog = transferLogs.find((log) => sameAddress(log.args.from, ZERO) && sameAddress(log.args.to, WALLET));
+  const newTokenId = mintLog?.args?.tokenId ?? simTokenId;
+
+  const afterMint = await readBalances();
+  const used0 = before.lfi - afterMint.lfi;
+  const used1 = before.usdc - afterMint.usdc;
+
+  await simulateAndSend({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'approve', args: [CONTRACTS.gauge, newTokenId], label: `Approve NFT #${newTokenId} to gauge` });
+  await simulateAndSend({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'deposit', args: [newTokenId], label: `Stake NFT #${newTokenId}` });
+
+  const verifiedOwner = await publicClient.readContract({ address: CONTRACTS.nftManager, abi: nftManagerAbi, functionName: 'ownerOf', args: [newTokenId] });
+  const verifiedStake = await stakedContains(newTokenId);
+  if (!sameAddress(verifiedOwner, CONTRACTS.gauge) || verifiedStake !== true) throw new Error(`post-stake verification failed owner=${verifiedOwner} staked=${verifiedStake}`);
+
+  return { newTokenId, mintHash: hash, used0, used1, simLiquidity, simAmount0, simAmount1 };
+}
+
+function txArrayLiteral(cycleTxs) {
+  return cycleTxs.map((tx) => `      { label: '${escapeTs(tx.label)}', hash: '${tx.hash}' },`).join('\n');
+}
+
+function escapeTs(value) { return String(value).replaceAll('\\', '\\\\').replaceAll("'", "\\'"); }
+
+function updatePositionsTs({ oldTokenId, newTokenId, lowerTick, upperTick, currentTick, used0, used1, cycleTxs }) {
+  const file = path.join(REPO, 'src', 'positions.ts');
+  let src = readFileSync(file, 'utf8');
+  const firstStart = src.indexOf('  {\n    tokenId:');
+  const secondStart = src.indexOf('  {\n    tokenId: 341002n', firstStart + 1);
+  if (firstStart < 0 || secondStart < 0) throw new Error('unable to locate managed position block');
+  const firstBlock = `  {\n    tokenId: ${newTokenId}n,\n    label: 'Hermes CL200 one-tick band',\n    origin: 'hermes-managed',\n    pair: 'LFI/USDC',\n    pool: CONTRACTS.pool,\n    gauge: CONTRACTS.gauge,\n    nftManager: CONTRACTS.nftManager,\n    depositor: WALLET_ADDRESS,\n    enteredAt: '${new Date().toISOString().slice(0, 10)}',\n    intendedRange: 'One CL200 tick, ${rangeLabel(lowerTick, upperTick)}, rebalanced from tick ${currentTick}',\n    notes: 'Rebalanced by the Hermes one-cron Aerodrome executor into the active one-tick band and staked into the Aerodrome gauge.',\n    deposited: {\n      lfiRaw: ${used0}n,\n      usdcRaw: ${used1}n,\n    },\n    setupTxs: [\n${txArrayLiteral(cycleTxs)}\n    ],\n  },\n`;
+  src = src.slice(0, firstStart) + firstBlock + src.slice(secondStart);
+
+  const historyMarker = 'export const positionHistory = [\n';
+  const historyAt = src.indexOf(historyMarker);
+  if (historyAt < 0) throw new Error('unable to locate history array');
+  const date = new Date().toISOString().slice(0, 10);
+  const exitTx = cycleTxs.find((tx) => tx.label.startsWith('Burn old')) || cycleTxs.find((tx) => tx.label.startsWith('Decrease old')) || cycleTxs.find((tx) => tx.label.startsWith('Withdraw old'));
+  const stakeTx = cycleTxs.find((tx) => tx.label.startsWith('Stake NFT'));
+  const inserted = `  {\n    date: '${date}',\n    event: 'Exited previous Hermes NFT #${oldTokenId}',\n    detail: 'One-cron rebalance closed the previous managed range before entering the 2% one-tick band.',\n    tokenId: ${oldTokenId}n,\n    tx: '${exitTx?.hash ?? cycleTxs[0]?.hash}' as \`0x\${string}\`,\n  },\n  {\n    date: '${date}',\n    event: 'Entered and staked one-tick NFT #${newTokenId}',\n    detail: 'Range ${rangeLabel(lowerTick, upperTick)} around tick ${currentTick}. Mint used ${fmt(used0, 18, 6)} LFI and ${fmt(used1, 6, 6)} USDC.',\n    tokenId: ${newTokenId}n,\n    tx: '${stakeTx?.hash ?? cycleTxs[cycleTxs.length - 1]?.hash}' as \`0x\${string}\`,\n  },\n`;
+  src = src.slice(0, historyAt + historyMarker.length) + inserted + src.slice(historyAt + historyMarker.length);
+  writeFileSync(file, src);
+}
+
+function commitAndPush(newTokenId) {
+  run('npm test', { stdio: 'inherit' });
+  run('npm run build', { stdio: 'inherit' });
+  run('git add src/positions.ts scripts/aerodrome-one-cron-rebalance.mjs');
+  const status = run('git status --porcelain');
+  if (!status.trim()) return { committed: false };
+  run(`git commit -m "chore: sync Aerodrome one-tick LP #${newTokenId}"`, { stdio: 'inherit' });
+  try {
+    run('git push origin main', { stdio: 'inherit' });
+  } catch {
+    run('git pull --rebase origin main', { stdio: 'inherit' });
+    run('git push origin main', { stdio: 'inherit' });
+  }
+  const sha = run('git rev-parse HEAD').trim();
+  let runId;
+  try {
+    const json = run(`gh run list --repo ${OWNER_REPO} --limit 1 --json databaseId,headSha,status,workflowName`);
+    const [latest] = JSON.parse(json);
+    if (latest?.headSha === sha) runId = latest.databaseId;
+    if (runId) run(`gh run watch ${runId} --repo ${OWNER_REPO} --exit-status`, { stdio: 'inherit' });
+  } catch (error) {
+    console.log(`Pages watch skipped: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const http = run(`curl -sS -L -o /tmp/clawberto-aerodrome-cron.html -w '%{http_code}' ${LIVE_URL}`).trim();
+  if (http !== '200') throw new Error(`live dashboard HTTP ${http}`);
+  return { committed: true, sha, runId };
+}
+
+async function statusPayload() {
+  const pool = await readPool();
+  const tokenId = currentManagedTokenId();
+  let pos;
+  let stake;
+  let reward;
+  try {
+    pos = tokenId ? await readPosition(tokenId) : undefined;
+    stake = tokenId ? await stakedContains(tokenId) : undefined;
+    reward = tokenId ? await earned(tokenId) : undefined;
+  } catch (error) {
+    pos = { error: error instanceof Error ? error.message : String(error) };
+  }
+  const desired = desiredRange(pool.currentTick);
+  const balances = await readBalances();
+  return { at: nowIso(), chainId: CHAIN_ID, tokenId, pool, desired, position: pos, stakedContains: stake, earned: reward, balances };
+}
+
+async function rebalance(reason) {
+  initSigner();
+  txs = [];
+  const oldTokenId = currentManagedTokenId();
+  const pool = await readPool();
+  const target = desiredRange(pool.currentTick);
+  const stateBefore = await statusPayload();
+
+  if (oldTokenId) await exitOldPosition(oldTokenId);
+  await convertEthExcessToUsdc();
+  const balanceAction = await balanceInventoryToRange(pool.currentTick, target.lowerTick, target.upperTick);
+  const mint = await mintAndStake(target.lowerTick, target.upperTick);
+  updatePositionsTs({ oldTokenId, newTokenId: mint.newTokenId, lowerTick: target.lowerTick, upperTick: target.upperTick, currentTick: pool.currentTick, used0: mint.used0, used1: mint.used1, cycleTxs: txs });
+  const repo = commitAndPush(mint.newTokenId);
+  const stateAfter = await statusPayload();
+  const result = {
+    status: 'REBALANCED',
+    reason,
+    oldTokenId,
+    newTokenId: mint.newTokenId.toString(),
+    range: target,
+    used: { lfiRaw: mint.used0.toString(), usdcRaw: mint.used1.toString(), lfi: fmt(mint.used0, 18, 6), usdc: fmt(mint.used1, 6, 6) },
+    balanceAction,
+    txs,
+    repo,
+    before: stateBefore,
+    after: stateAfter,
+    at: nowIso(),
+  };
+  writeJson(STATE_PATH, result);
+  console.log(stringifyJson(result));
+  return result;
+}
+
+async function decideAndMaybeRun() {
+  const status = await statusPayload();
+  const pos = status.position;
+  let reason = '';
+  if (!status.tokenId || !pos || pos.error) {
+    reason = `missing/unreadable managed position: ${pos?.error || 'none'}`;
+  } else if (!sameAddress(pos.owner, CONTRACTS.gauge) || status.stakedContains !== true) {
+    reason = `stake custody mismatch owner=${pos.owner} staked=${status.stakedContains}`;
+  } else if (pos.tickLower !== status.desired.lowerTick || pos.tickUpper !== status.desired.upperTick) {
+    reason = `range ${pos.tickLower}-${pos.tickUpper} != desired ${status.desired.lowerTick}-${status.desired.upperTick}`;
+  } else if (rangeState(status.pool.currentTick, pos.tickLower, pos.tickUpper) !== 'IN_RANGE') {
+    reason = `out of range at tick ${status.pool.currentTick}`;
+  }
+
+  if (!reason) {
+    const hold = { status: 'HOLD', at: nowIso(), statusSnapshot: status };
+    writeJson(STATE_PATH, hold);
+    console.log(stringifyJson(hold));
+    return hold;
+  }
+
+  if (process.env.HERMES_LP_EXECUTE !== '1') {
+    const blocked = { status: 'EXECUTION_BLOCKED', reason, at: nowIso(), note: 'Set HERMES_LP_EXECUTE=1 inside the one cron job to execute.', statusSnapshot: status };
+    writeJson(STATE_PATH, blocked);
+    console.log(stringifyJson(blocked));
+    return blocked;
+  }
+
+  return rebalance(reason);
+}
+
+async function main() {
+  ensureRunDir();
+  const statusOnly = process.argv.includes('--status');
+  if (statusOnly) {
+    console.log(stringifyJson(await statusPayload()));
+    return;
+  }
+  acquireLock();
+  try {
+    await decideAndMaybeRun();
+  } catch (error) {
+    const failure = { status: 'ERROR', at: nowIso(), error: error instanceof Error ? error.stack || error.message : String(error) };
+    writeJson(STATE_PATH, failure);
+    console.error(stringifyJson(failure));
+    process.exitCode = 1;
+  } finally {
+    releaseLock();
+  }
+}
+
+await main();
