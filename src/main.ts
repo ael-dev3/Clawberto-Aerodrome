@@ -219,8 +219,11 @@ function walletLpSummary(snapshot: DashboardSnapshot, wallet: TrackedWalletSnaps
     value: item.valuation.aprPct,
     weight: item.valuation.usd?.totalUsd,
   })));
+  const inRange = valuations.some((item) => item.status?.state === 'IN_RANGE');
   const feeApr = positions.length > 0
-    ? estimatedFeeAprPct(snapshot.market.managedPair?.volume?.h24, poolFeePct(snapshot), snapshot.market.managedPair?.liquidityUsd)
+    ? inRange
+      ? estimatedFeeAprPct(snapshot.market.managedPair?.volume?.h24, poolFeePct(snapshot), snapshot.market.managedPair?.liquidityUsd) ?? 0
+      : 0
     : undefined;
   const holdVsLp = weightedAverage(valuations.map((item) => ({
     value: item.valuation.holdVsLpPct ?? item.valuation.fullRangeIlPct,

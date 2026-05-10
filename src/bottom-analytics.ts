@@ -140,8 +140,11 @@ function summarizePositions(snapshot: DashboardSnapshot, positions: typeof snaps
     value: item.valuation.holdVsLpPct ?? item.valuation.fullRangeIlPct,
     weight: item.valuation.usd?.totalUsd,
   })));
+  const inRange = valuations.some((item) => item.status?.state === 'IN_RANGE');
   const feeApr = active.length > 0
-    ? estimatedFeeAprPct(snapshot.market.managedPair?.volume?.h24, poolFeePct(snapshot), snapshot.market.managedPair?.liquidityUsd)
+    ? inRange
+      ? estimatedFeeAprPct(snapshot.market.managedPair?.volume?.h24, poolFeePct(snapshot), snapshot.market.managedPair?.liquidityUsd) ?? 0
+      : 0
     : undefined;
   const outOfRange = valuations.some((item) => item.status && item.status.state !== 'IN_RANGE');
 
