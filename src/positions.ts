@@ -24,7 +24,7 @@ export interface ManagedPositionRecord {
 
 export const managedPositions: ManagedPositionRecord[] = [
   {
-    tokenId: 344803n,
+    tokenId: 344861n,
     label: 'Hermes CL200 one-tick band',
     origin: 'hermes-managed',
     pair: 'LFI/USDC',
@@ -33,23 +33,23 @@ export const managedPositions: ManagedPositionRecord[] = [
     nftManager: CONTRACTS.nftManager,
     depositor: WALLET_ADDRESS,
     enteredAt: '2026-05-10',
-    intendedRange: 'One CL200 tick, -366200 to -366000, rebalanced from tick -366043',
+    intendedRange: 'One CL200 tick, -366000 to -365800, rebalanced from tick -365990',
     notes: 'Rebalanced by the Hermes one-cron Aerodrome executor into the active one-tick band and staked into the Aerodrome gauge.',
     deposited: {
-      lfiRaw: 6507292821670624064690n,
-      usdcRaw: 3577095n,
+      lfiRaw: 47495465473950622178992n,
+      usdcRaw: 383568n,
     },
     setupTxs: [
-      { label: 'Collect old NFT #341439', hash: '0x2113a1a4054d9febf2aa2378d1c200277b7ffcdc64cae37e583a2b06ccc39b58' },
-      { label: 'Burn old NFT #341439', hash: '0x9dfdb8e5ac2aefd837f07ffe46a0ad95482898c185b7b8007021f3cb1a94911b' },
-      { label: 'Swap ETH to USDC via WETH/USDC-1', hash: '0xf7b8d4d37fde094dc5025bfa53a13c7ba4c12e040e91d3759487b6f047fff5d4' },
-      { label: 'Approve router LFI', hash: '0x4a3e767e2e0e3f7fea028b27de27ebed51b5ac0085ac1a2291556ceed4dcb63c' },
-      { label: 'Balance LFI to USDC', hash: '0x2fdf15ebe661eb3ec82eaddb93e120baa69b8917a1603178eb4c9fb5120fcd52' },
-      { label: 'Approve NPM LFI', hash: '0x37bc34602253b6af06d31dbd1868b4c62cb4ee9e8f9753f8f0ea1d26a536f653' },
-      { label: 'Approve NPM USDC', hash: '0xbe6d8676b805a4bba7c29e56e885cc6bf32263fad86be6bceac9a4ac1eb2a721' },
-      { label: 'Mint one-tick NFT #344803', hash: '0xbc7e601985a3b3b85d8d990f75e76b8e3d2978b7c8ad4cc3cf02fd3c92f4a1a4' },
-      { label: 'Approve NFT #344803 to gauge', hash: '0xa3bdd2ef6a63a5e6e654a9091c4ebc3a6acea4c6cb760a2c36034963bb18c0f4' },
-      { label: 'Stake NFT #344803', hash: '0x0219b121aeb632269a9510bb4b4e11311ccb026894769b2bd06540924bd1bdf6' },
+      { label: 'Withdraw old NFT #344803', hash: '0xca1a8b49940c9e14e8a9f2eeda81b6e62ade4961fcb570036fc62628ed80f95c' },
+      { label: 'Collect old NFT #344803', hash: '0xfae9359e958065dd7d77817a0d53dd3592b0946c188003dbcf7864e0aa701548' },
+      { label: 'Decrease old NFT #344803', hash: '0xb3e29c07ff816de036a8ee6d203a6f5d0e115d9525447b0fc07cff729bb17e99' },
+      { label: 'Final collect old NFT #344803', hash: '0x01209acbc8282acb900523eafe368e718d8bb18eb0003341ebfc0a4ed73b6328' },
+      { label: 'Burn old NFT #344803', hash: '0xb40d5720949584c0e35925908aa61c58f28c0dbaaed20850c55195b27f8ea8c6' },
+      { label: 'Approve router USDC', hash: '0xa16c26886679672d6da544670de162ae912849808c814676cbb2f8c6d3084c55' },
+      { label: 'Balance USDC to LFI', hash: '0x05b3bd8284a5afb79238f0b7c3f7dee0bb929fc8b4fc8e8fe06753298a192f59' },
+      { label: 'Mint one-tick NFT #344861', hash: '0x9e843073e4cadf81306985a8d453308c37070da302d612ad9eb39098ed7c2e74' },
+      { label: 'Approve NFT #344861 to gauge', hash: '0xbdf01fe4db003bfc6a42503522459f55fead205ec42188926bc504e7cf675387' },
+      { label: 'Stake NFT #344861', hash: '0xa6d31b6f884d96d8a302a3bdd8bd1057a0b56ab5f1f61566f596748c090f2c97' },
     ],
   },
   {
@@ -68,6 +68,20 @@ export const managedPositions: ManagedPositionRecord[] = [
 ];
 
 export const positionHistory = [
+  {
+    date: '2026-05-10',
+    event: 'Exited previous Hermes NFT #344803',
+    detail: 'One-cron rebalance closed the previous managed range before entering the 2% one-tick band.',
+    tokenId: 344803n,
+    tx: '0xb40d5720949584c0e35925908aa61c58f28c0dbaaed20850c55195b27f8ea8c6' as `0x${string}`,
+  },
+  {
+    date: '2026-05-10',
+    event: 'Entered and staked one-tick NFT #344861',
+    detail: 'Range -366000 to -365800 around tick -365990. Mint used 47,495.465474 LFI and 0.383568 USDC.',
+    tokenId: 344861n,
+    tx: '0xa6d31b6f884d96d8a302a3bdd8bd1057a0b56ab5f1f61566f596748c090f2c97' as `0x${string}`,
+  },
   {
     date: '2026-05-10',
     event: 'Exited previous Hermes NFT #341439',
