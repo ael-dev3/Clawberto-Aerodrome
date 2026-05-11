@@ -24,12 +24,17 @@ import { scoreWalletTiers, type WalletTierInput, type WalletTierScore } from './
 import { normalizeWalletUptimeStats, updateWalletUptimeStats, type WalletRangeState, type WalletUptimeStats } from './uptime';
 
 const REFRESH_MS = 15_000;
-const UPTIME_STORAGE_KEY = 'clawberto-range-uptime-v3-pnl-reset-2026-05-11';
-const PNL_STORAGE_KEY = 'clawberto-overall-pnl-v1-reset-2026-05-11';
-const LEGACY_UPTIME_STORAGE_KEYS = ['clawberto-range-uptime-v1', 'clawberto-range-uptime-v2-reset-2026-05-11'];
+const UPTIME_STORAGE_KEY = 'clawberto-range-uptime-v4-performance-reset-2026-05-11T16-20-36+02-00';
+const PNL_STORAGE_KEY = 'clawberto-overall-pnl-v2-performance-reset-2026-05-11T16-20-36+02-00';
+const LEGACY_UPTIME_STORAGE_KEYS = [
+  'clawberto-range-uptime-v1',
+  'clawberto-range-uptime-v2-reset-2026-05-11',
+  'clawberto-range-uptime-v3-pnl-reset-2026-05-11',
+];
+const LEGACY_PNL_STORAGE_KEYS = ['clawberto-overall-pnl-v1-reset-2026-05-11'];
 const app = document.querySelector<HTMLDivElement>('#app') ?? failMissingRoot();
 
-clearLegacyUptime();
+clearLegacyStats();
 const walletUptimeStats = loadPersistedUptime();
 const walletPnlRecords = loadPersistedPnl();
 
@@ -40,9 +45,10 @@ function failMissingRoot(): never {
 let refreshTimer: number | undefined;
 let tooltipNode: HTMLDivElement | undefined;
 
-function clearLegacyUptime(): void {
+function clearLegacyStats(): void {
   try {
     LEGACY_UPTIME_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
+    LEGACY_PNL_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
   } catch {
     // localStorage can be unavailable in restrictive browser contexts; fresh in-memory tracking still works.
   }
