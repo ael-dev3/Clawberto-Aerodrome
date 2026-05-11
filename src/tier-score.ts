@@ -73,6 +73,12 @@ function yieldScore(input: WalletTierInput): number {
   return clamp((1 - Math.exp(-adjustedYieldPct / 75)) * 100);
 }
 
+function uptimeQualityScore(value: number): number {
+  const uptime = clamp(value);
+  if (uptime < 50) return uptime;
+  return 50 + Math.sqrt((uptime - 50) / 50) * 50;
+}
+
 function tierFor(score: Omit<WalletTierScore, 'tier' | 'tierClass' | 'id'>): PerformanceTier {
   if (
     score.score >= 96 &&
@@ -84,9 +90,9 @@ function tierFor(score: Omit<WalletTierScore, 'tier' | 'tierClass' | 'id'>): Per
     return 'S';
   }
   if (score.score >= 88 && score.trackedMs >= 3 * DAY_MS && score.uptimePct >= 97 && score.activePct >= 98) return 'A';
-  if (score.score >= 76 && score.trackedMs >= DAY_MS && score.uptimePct >= 90) return 'B';
-  if (score.score >= 62 && score.uptimePct >= 65) return 'C';
-  if (score.score >= 45) return 'D';
+  if (score.score >= 72 && score.trackedMs >= DAY_MS && score.uptimePct >= 78 && score.activePct >= 90) return 'B';
+  if (score.score >= 58 && score.uptimePct >= 55) return 'C';
+  if (score.score >= 38) return 'D';
   return 'F';
 }
 
@@ -95,10 +101,10 @@ function preliminaryScore(input: WalletTierInput): PreliminaryScore {
   const observedActivePct = activePct(input.uptime);
   const observedTrackedMs = trackedMs(input.uptime);
   const currentYieldScore = yieldScore(input);
-  const historyScore = observedUptimePct * 0.8 + observedActivePct * 0.2;
-  const rawScore = historyScore * 0.7 + currentYieldScore * 0.3;
-  const confidence = clamp(observedTrackedMs / DAY_MS, 0, 1);
-  const score = rawScore * (0.65 + confidence * 0.35);
+  const historyScore = uptimeQualityScore(observedUptimePct) * 0.85 + observedActivePct * 0.15;
+  const rawScore = historyScore * 0.78 + currentYieldScore * 0.22;
+  const confidence = clamp(observedTrackedMs / (6 * HOUR_MS), 0, 1);
+  const score = rawScore * (0.85 + confidence * 0.15);
 
   return {
     id: input.id,

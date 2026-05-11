@@ -51,6 +51,32 @@ describe('wallet tier scores', () => {
     expect(score.tier).not.toBe('S');
   });
 
+  it('treats 80 percent uptime as respectable for a narrow LP after real history', () => {
+    const [score] = scoreWalletTiers([{
+      id: 'narrow',
+      uptime: uptime(19.2 * hour, 4.8 * hour),
+      emissionAprPct: 22,
+      feeAprPct: 2,
+      lpUsd: 100,
+    }]);
+
+    expect(score.uptimePct).toBeCloseTo(80, 1);
+    expect(score.tier).toBe('B');
+  });
+
+  it('does not punish 80 percent uptime into D tier during early tracking', () => {
+    const [score] = scoreWalletTiers([{
+      id: 'fresh-narrow',
+      uptime: uptime(4.8 * hour, 1.2 * hour),
+      emissionAprPct: 22,
+      feeAprPct: 2,
+      lpUsd: 100,
+    }]);
+
+    expect(score.uptimePct).toBeCloseTo(80, 1);
+    expect(score.tier).toBe('C');
+  });
+
   it('keeps S tier reserved for long, near-perfect uptime and strong yield', () => {
     const [score] = scoreWalletTiers([{
       id: 'elite',
