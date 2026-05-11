@@ -121,7 +121,8 @@ def is_soft_stale_benign(state: dict[str, Any]) -> bool:
     range_state = state.get('range') if isinstance(state.get('range'), dict) else {}
     reasons = state.get('reasons') if isinstance(state.get('reasons'), list) else []
     percent = range_state.get('percentOfHalfWidth')
-    near_edge = isinstance(percent, (int, float)) and percent <= POLICY['edge_trigger']['trigger_at_percent_of_half_width']
+    has_edge_evidence = isinstance(percent, (int, float))
+    near_edge = has_edge_evidence and percent <= POLICY['edge_trigger']['trigger_at_percent_of_half_width']
     return bool(
         state.get('status') == 'WATCHED'
         and state.get('wakeAgent') is not True
@@ -129,6 +130,7 @@ def is_soft_stale_benign(state: dict[str, Any]) -> bool:
         and state.get('recommendedAction', 'HOLD') == 'HOLD'
         and range_state.get('inRange') is True
         and range_state.get('desiredMismatch') is not True
+        and has_edge_evidence
         and not near_edge
         and not any(reason in STALE_ACTION_REASONS for reason in reasons)
     )
@@ -229,9 +231,7 @@ def main() -> None:
     elif stale_for_alert:
         output.update(review_only('watcher_state_stale', age))
     elif stale_for_action:
-        if consecutive_if_stale >= POLICY['stale_hysteresis_runs']:
-            output.update(review_only('watcher_state_repeated_stale', age))
-        elif is_soft_stale_benign(state):
+        if is_soft_stale_benign(state):
             output.update({
                 'wakeAgent': False,
                 'actionRequired': False,
@@ -242,6 +242,8 @@ def main() -> None:
                 'reason': 'watcher_state_soft_stale',
                 'age_seconds': age,
             })
+        elif consecutive_if_stale >= POLICY['stale_hysteresis_runs']:
+            output.update(review_only('watcher_state_repeated_stale', age))
         else:
             output.update(review_only('watcher_state_stale_action_suppressed', age))
     elif state.get('wakeAgent') is True:

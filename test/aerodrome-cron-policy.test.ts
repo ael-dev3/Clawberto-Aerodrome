@@ -1,50 +1,128 @@
 import { describe, expect, it } from 'vitest';
 import launchdPlist from '../ops/launchd/com.clawberto.aerodrome.onecron.plist?raw';
 import cronScript from '../scripts/aerodrome-one-cron-rebalance.mjs?raw';
+import releaseSyncScript from '../scripts/aerodrome-dashboard-release-sync.mjs?raw';
 import launchdWrapper from '../scripts/aerodrome-one-cron-launchd.sh?raw';
+import watcherScript from '../scripts/aerodrome-lp-watcher.mjs?raw';
+import supervisorPrecheck from '../scripts/aerodrome-lp-supervisor-precheck.py?raw';
 
-function functionBody(name: string): string {
+function functionBody(source: string, name: string): string {
   const marker = `function ${name}`;
-  const start = cronScript.indexOf(marker);
+  const start = source.indexOf(marker);
   expect(start, `${name}() should exist`).toBeGreaterThanOrEqual(0);
 
-  const bodyOpen = cronScript.indexOf(') {', start) + 2;
-  expect(bodyOpen, `${name}() should have a body`).toBeGreaterThanOrEqual(2);
+  const paramsOpen = source.indexOf('(', start);
+  expect(paramsOpen, `${name}() should have parameters`).toBeGreaterThanOrEqual(0);
+
+  let paramsDepth = 0;
+  let paramsClose = -1;
+  for (let i = paramsOpen; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '(') paramsDepth += 1;
+    if (char === ')') {
+      paramsDepth -= 1;
+      if (paramsDepth === 0) {
+        paramsClose = i;
+        break;
+      }
+    }
+  }
+
+  const bodyOpen = source.indexOf('{', paramsClose);
+  expect(bodyOpen, `${name}() should have a body`).toBeGreaterThanOrEqual(0);
 
   let depth = 0;
-  let entered = false;
-  for (let i = bodyOpen; i < cronScript.length; i += 1) {
-    const char = cronScript[i];
-    if (char === '{') {
-      depth += 1;
-      entered = true;
-    } else if (char === '}') {
+  for (let i = bodyOpen; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '{') depth += 1;
+    if (char === '}') {
       depth -= 1;
-      if (entered && depth === 0) return cronScript.slice(start, i + 1);
+      if (depth === 0) return source.slice(start, i + 1);
     }
   }
   throw new Error(`Unable to parse ${name}() body`);
 }
 
-describe('Aerodrome one-cron operational policy', () => {
-  it('keeps dashboard/GitHub sync out of the rebalance hot path by default', () => {
-    const rebalanceBody = functionBody('rebalance');
+const hotPathForbidden = [
+  ['dashboard sync env gate', /HERMES_DASHBOARD_SYNC/],
+  ['execSync shell helper', /\bexecSync\b/],
+  ['npm test/build command', /npm\s+(test|run\s+build)\b/],
+  ['git repository command', /git\s+(add|commit|push|pull|rebase|rev-parse|status)\b/],
+  ['GitHub CLI run command', /gh\s+run\b/],
+  ['Pages deployment/watch logic', /(GitHub Pages|Deploy GitHub Pages|Pages watch|LIVE_URL|OWNER_REPO|ael-dev3\.github\.io)/],
+  ['deployment HTTP curl verification', /curl\s+-/],
+  ['repo-mutating dashboard updater', /(updatePositionsTs|commitAndPush|src['"]\s*,\s*['"]positions\.ts)/],
+];
 
-    expect(cronScript).toContain("const DASHBOARD_SYNC_ENABLED = process.env.HERMES_DASHBOARD_SYNC === '1';");
-    expect(rebalanceBody).not.toContain('updatePositionsTs(');
-    expect(rebalanceBody).not.toContain('commitAndPush(');
-    expect(rebalanceBody).toContain('syncDashboardIfEnabled(');
+function expectNoForbiddenHotPath(source: string): void {
+  for (const [label, pattern] of hotPathForbidden) {
+    expect(source, `LP runtime must not contain ${label}`).not.toMatch(pattern as RegExp);
+  }
+}
+
+describe('Aerodrome one-cron operational policy', () => {
+  it('keeps repository/build/deploy/GitHub Pages capability out of the LP runtime hot path', () => {
+    expectNoForbiddenHotPath(cronScript);
+    expect(cronScript).not.toContain('aerodrome-dashboard-release-sync');
   });
 
-  it('does not use hardcoded dashboard positions as active-candidate input unless explicitly enabled', () => {
-    const candidateBody = functionBody('candidateManagedTokenIds');
+  it('cannot be made to run dashboard repo sync by setting HERMES_DASHBOARD_SYNC', () => {
+    expect(cronScript).not.toContain('process.env.HERMES_DASHBOARD_SYNC');
+    expect(cronScript).not.toContain('DASHBOARD_SYNC_ENABLED');
+    expect(cronScript).not.toContain('syncDashboardIfEnabled');
+    expect(cronScript).not.toContain('updatePositionsTs(');
+    expect(cronScript).not.toContain('commitAndPush(');
+  });
 
-    expect(candidateBody).toContain('INCLUDE_DASHBOARD_CANDIDATES');
-    expect(candidateBody).not.toMatch(/path\.join\(REPO,\s*'src',\s*'positions\.ts'\),/);
+  it('writes an artifact-only dashboard sync request after a rebalance', () => {
+    const rebalanceBody = functionBody(cronScript, 'rebalance');
+    const requestBody = functionBody(cronScript, 'writeDashboardSyncRequest');
+
+    expect(cronScript).toContain("const DASHBOARD_SYNC_REQUEST_DIR = path.join(REPO, 'runs', 'aerodrome-dashboard-sync');");
+    expect(requestBody).toContain('writeJson(requestPath, request);');
+    expect(requestBody).toContain("skipped: 'dashboard sync is disabled in LP hot path'");
+    expect(requestBody).toContain('oldTokenId: oldTokenId == null ? null : oldTokenId.toString()');
+    expect(requestBody).toContain('newTokenId: newTokenId == null ? null : newTokenId.toString()');
+    expect(requestBody).toContain('lowerTick');
+    expect(requestBody).toContain('upperTick');
+    expect(requestBody).toContain('currentTick');
+    expect(requestBody).toContain('used: {');
+    expect(requestBody).toContain('txHashes: cycleTxs.map((tx) => tx.hash)');
+    expect(rebalanceBody).toContain('const repo = writeDashboardSyncRequest(');
+    expect(rebalanceBody).not.toContain('updatePositionsTs(');
+    expect(rebalanceBody).not.toContain('commitAndPush(');
+  });
+
+  it('does not use hardcoded dashboard positions as active-candidate input', () => {
+    const candidateBody = functionBody(cronScript, 'candidateManagedTokenIds');
+
+    expect(cronScript).not.toContain('dashboardManagedTokenIds');
+    expect(cronScript).not.toContain('HERMES_INCLUDE_DASHBOARD_CANDIDATES');
+    expect(candidateBody).not.toContain('positions.ts');
+    expect(candidateBody).not.toMatch(/path\.join\(REPO,\s*'src',\s*'positions\.ts'\)/);
+  });
+
+  it('keeps dashboard release sync separate from watcher/precheck/rebalance hot paths', () => {
+    expect(releaseSyncScript).toContain('function updatePositionsTs');
+    expect(releaseSyncScript).toContain("run('npm', ['test']");
+    expect(releaseSyncScript).toContain("run('npm', ['run', 'build']");
+    expect(releaseSyncScript).toContain("run('git', ['add', 'src/positions.ts'");
+    expect(releaseSyncScript).toContain("run('gh', ['run', 'list'");
+    expect(releaseSyncScript).toContain("run('gh', ['run', 'watch'");
+    expect(releaseSyncScript).toContain("run('curl', ['-sS', '-L'");
+
+    for (const [name, source] of [
+      ['rebalance runtime', cronScript],
+      ['watcher', watcherScript],
+      ['supervisor precheck', supervisorPrecheck],
+      ['retired launchd wrapper', launchdWrapper],
+    ] as const) {
+      expect(source, `${name} must not import/call release sync`).not.toContain('aerodrome-dashboard-release-sync');
+    }
   });
 
   it('adds an explicit gas safety buffer to simulated writes', () => {
-    const simulateBody = functionBody('simulateAndSend');
+    const simulateBody = functionBody(cronScript, 'simulateAndSend');
 
     expect(cronScript).toContain('function bufferedGasLimit');
     expect(simulateBody).toContain('estimateContractGas');

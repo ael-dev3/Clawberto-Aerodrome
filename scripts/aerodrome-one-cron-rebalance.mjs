@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,15 +21,12 @@ import { base } from 'viem/chains';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, '..');
 const RUN_DIR = path.join(REPO, 'runs', 'aerodrome-one-cron');
+const DASHBOARD_SYNC_REQUEST_DIR = path.join(REPO, 'runs', 'aerodrome-dashboard-sync');
 const STATE_PATH = path.join(RUN_DIR, 'state.json');
 const LOCK_PATH = path.join(RUN_DIR, 'rebalance.lock');
 
 const RPC_URL = process.env.HERMES_RPC_URL || 'https://base-rpc.publicnode.com';
-const DASHBOARD_SYNC_ENABLED = process.env.HERMES_DASHBOARD_SYNC === '1';
-const INCLUDE_DASHBOARD_CANDIDATES = process.env.HERMES_INCLUDE_DASHBOARD_CANDIDATES === '1';
 const DISCOVERY_FORWARD_SCAN = Number(process.env.HERMES_DISCOVERY_FORWARD_SCAN || '250');
-const LIVE_URL = 'https://ael-dev3.github.io/Clawberto-Aerodrome/';
-const OWNER_REPO = 'ael-dev3/Clawberto-Aerodrome';
 const WALLET = '0xC979efda857823bcA9A335a6c7b62A7531e1cFEA';
 const KEYCHAIN_SERVICE = 'Hermes Farcaster Wallet';
 const CHAIN_ID = 8453;
@@ -54,7 +51,10 @@ const MIN_REBALANCE_USD = 0.15;
 const IDLE_REDEPLOY_USD = Number(process.env.HERMES_IDLE_REDEPLOY_USD || '2');
 const MIN_POSITION_USD = Number(process.env.HERMES_MIN_POSITION_USD || '1');
 const REBALANCE_COOLDOWN_SECONDS = Number(process.env.HERMES_REBALANCE_COOLDOWN_SECONDS || '600');
-const EXTRA_TOKEN_IDS = (process.env.HERMES_EXTRA_TOKEN_IDS || '').split(',').map((id) => id.trim()).filter(Boolean);
+const EXTRA_TOKEN_IDS = (process.env.HERMES_EXTRA_TOKEN_IDS || '')
+  .split(',')
+  .map((id) => id.trim())
+  .filter(Boolean);
 const MAX_UINT128 = (1n << 128n) - 1n;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -196,7 +196,6 @@ function ensureRunDir() { mkdirSync(RUN_DIR, { recursive: true }); }
 function stringifyJson(value) { return JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v, 2); }
 function writeJson(file, value) { writeFileSync(file, stringifyJson(value) + '\n'); }
 function readJson(file, fallback) { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return fallback; } }
-function run(cmd, opts = {}) { return execSync(cmd, { cwd: REPO, encoding: 'utf8', stdio: opts.stdio || 'pipe', env: { ...process.env, ...opts.env } }); }
 function tokenIdsFromText(text) { return [...text.matchAll(/(?:tokenId[: #]*|NFT #|sim#)(\d{5,})/g)].map((match) => match[1]); }
 function positionUsdValue({ lfiRaw = 0n, usdcRaw = 0n, tick }) { return Number(formatUnits(lfiRaw, 18)) * tickPrice(tick) + Number(formatUnits(usdcRaw, 6)); }
 function recentRebalanceAgeSeconds() {
@@ -319,14 +318,6 @@ async function earned(tokenId) {
   return publicClient.readContract({ address: CONTRACTS.gauge, abi: gaugeAbi, functionName: 'earned', args: [WALLET, BigInt(tokenId)] });
 }
 
-function dashboardManagedTokenIds() {
-  try {
-    return tokenIdsFromText(readFileSync(path.join(REPO, 'src', 'positions.ts'), 'utf8'));
-  } catch {
-    return [];
-  }
-}
-
 function candidateManagedTokenIds() {
   const ids = new Set(EXTRA_TOKEN_IDS);
   for (const file of [
@@ -337,9 +328,6 @@ function candidateManagedTokenIds() {
     try {
       for (const id of tokenIdsFromText(readFileSync(file, 'utf8'))) ids.add(id);
     } catch {}
-  }
-  if (INCLUDE_DASHBOARD_CANDIDATES) {
-    for (const id of dashboardManagedTokenIds()) ids.add(id);
   }
   const numeric = [...ids].map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0);
   const highestKnown = numeric.length ? Math.max(...numeric) : 0;
@@ -712,78 +700,51 @@ async function mintAndStake(lowerTick, upperTick) {
   return { newTokenId, mintHash: hash, used0, used1, simLiquidity, simAmount0, simAmount1 };
 }
 
-function txArrayLiteral(cycleTxs) {
-  return cycleTxs.map((tx) => `      { label: '${escapeTs(tx.label)}', hash: '${tx.hash}' },`).join('\n');
+function dashboardSyncRequestFilename(newTokenId, timestamp) {
+  const token = newTokenId == null ? 'unknown' : String(newTokenId);
+  const safeTimestamp = timestamp.replace(/[^0-9A-Za-z-]/g, '-');
+  return `${safeTimestamp}-token-${token}-pid-${process.pid}.json`;
 }
 
-function escapeTs(value) { return String(value).replaceAll('\\', '\\\\').replaceAll("'", "\\'"); }
+function writeDashboardSyncRequest({ oldTokenId, newTokenId, lowerTick, upperTick, currentTick, used0, used1, cycleTxs }) {
+  const timestamp = nowIso();
+  const requestPath = path.join(DASHBOARD_SYNC_REQUEST_DIR, dashboardSyncRequestFilename(newTokenId, timestamp));
+  const request = {
+    timestamp,
+    oldTokenId: oldTokenId == null ? null : oldTokenId.toString(),
+    newTokenId: newTokenId == null ? null : newTokenId.toString(),
+    lowerTick,
+    upperTick,
+    currentTick,
+    used: {
+      lfiRaw: used0 == null ? null : used0.toString(),
+      usdcRaw: used1 == null ? null : used1.toString(),
+      lfi: used0 == null ? null : fmt(used0, 18, 6),
+      usdc: used1 == null ? null : fmt(used1, 6, 6),
+    },
+    txHashes: cycleTxs.map((tx) => tx.hash),
+    txs: cycleTxs.map((tx) => ({ label: tx.label, hash: tx.hash })),
+    source: 'aerodrome-one-cron-rebalance',
+  };
 
-function updatePositionsTs({ oldTokenId, newTokenId, lowerTick, upperTick, currentTick, used0, used1, cycleTxs }) {
-  const file = path.join(REPO, 'src', 'positions.ts');
-  let src = readFileSync(file, 'utf8');
-  const managedMarker = 'export const managedPositions: ManagedPositionRecord[] = [\n';
-  const managedAt = src.indexOf(managedMarker);
-  const managedEnd = src.indexOf('];', managedAt);
-  if (managedAt < 0 || managedEnd < 0) throw new Error('unable to locate managed positions array');
-  const firstBlock = `  {\n    tokenId: ${newTokenId}n,\n    label: 'Hermes CL200 one-tick band',\n    origin: 'hermes-managed',\n    pair: 'LFI/USDC',\n    pool: CONTRACTS.pool,\n    gauge: CONTRACTS.gauge,\n    nftManager: CONTRACTS.nftManager,\n    depositor: WALLET_ADDRESS,\n    enteredAt: '${new Date().toISOString().slice(0, 10)}',\n    intendedRange: 'One CL200 tick, ${rangeLabel(lowerTick, upperTick)}, rebalanced from tick ${currentTick}',\n    notes: 'Rebalanced by the Hermes one-cron Aerodrome executor into the active one-tick band and staked into the Aerodrome gauge.',\n    deposited: {\n      lfiRaw: ${used0}n,\n      usdcRaw: ${used1}n,\n    },\n    setupTxs: [\n${txArrayLiteral(cycleTxs)}\n    ],\n  },\n`;
-  src = src.slice(0, managedAt + managedMarker.length) + firstBlock + src.slice(managedEnd);
-
-  const historyMarker = 'export const positionHistory = [\n';
-  const historyAt = src.indexOf(historyMarker);
-  if (historyAt < 0) throw new Error('unable to locate history array');
-  const date = new Date().toISOString().slice(0, 10);
-  const exitTx = cycleTxs.find((tx) => tx.label.startsWith('Burn old')) || cycleTxs.find((tx) => tx.label.startsWith('Decrease old')) || cycleTxs.find((tx) => tx.label.startsWith('Withdraw old'));
-  const stakeTx = cycleTxs.find((tx) => tx.label.startsWith('Stake NFT'));
-  const inserted = `  {\n    date: '${date}',\n    event: 'Exited previous Hermes NFT #${oldTokenId}',\n    detail: 'One-cron rebalance closed the previous managed range before entering the 2% one-tick band.',\n    tokenId: ${oldTokenId}n,\n    tx: '${exitTx?.hash ?? cycleTxs[0]?.hash}' as \`0x\${string}\`,\n  },\n  {\n    date: '${date}',\n    event: 'Entered and staked one-tick NFT #${newTokenId}',\n    detail: 'Range ${rangeLabel(lowerTick, upperTick)} around tick ${currentTick}. Mint used ${fmt(used0, 18, 6)} LFI and ${fmt(used1, 6, 6)} USDC.',\n    tokenId: ${newTokenId}n,\n    tx: '${stakeTx?.hash ?? cycleTxs[cycleTxs.length - 1]?.hash}' as \`0x\${string}\`,\n  },\n`;
-  src = src.slice(0, historyAt + historyMarker.length) + inserted + src.slice(historyAt + historyMarker.length);
-  writeFileSync(file, src);
-}
-
-function commitAndPush(newTokenId) {
-  run('npm test', { stdio: 'inherit' });
-  run('npm run build', { stdio: 'inherit' });
-  run('git add src/positions.ts scripts/aerodrome-one-cron-rebalance.mjs');
-  const status = run('git status --porcelain');
-  if (!status.trim()) return { committed: false };
-  run(`git commit -m "chore: sync Aerodrome one-tick LP #${newTokenId}"`, { stdio: 'inherit' });
+  let artifactError;
   try {
-    run('git push origin main', { stdio: 'inherit' });
-  } catch {
-    run('git pull --rebase origin main', { stdio: 'inherit' });
-    run('git push origin main', { stdio: 'inherit' });
+    mkdirSync(DASHBOARD_SYNC_REQUEST_DIR, { recursive: true });
+    writeJson(requestPath, request);
+  } catch (error) {
+    artifactError = error instanceof Error ? error.message : String(error);
+    console.error(`dashboard sync request artifact write failed: ${artifactError}`);
   }
-  const sha = run('git rev-parse HEAD').trim();
-  let runId;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    try {
-      const json = run(`gh run list --repo ${OWNER_REPO} --limit 5 --json databaseId,headSha,status,workflowName`);
-      const match = JSON.parse(json).find((candidate) => candidate?.headSha === sha && candidate?.workflowName === 'Deploy GitHub Pages');
-      if (match?.databaseId) {
-        runId = match.databaseId;
-        break;
-      }
-    } catch (error) {
-      console.log(`Pages run lookup attempt ${attempt + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    run('sleep 3');
-  }
-  if (runId) {
-    run(`gh run watch ${runId} --repo ${OWNER_REPO} --exit-status`, { stdio: 'inherit' });
-  } else {
-    console.log(`Pages watch skipped: no run found for ${sha}`);
-  }
-  const http = run(`curl -sS -L -o /tmp/clawberto-aerodrome-cron.html -w '%{http_code}' ${LIVE_URL}`).trim();
-  if (http !== '200') throw new Error(`live dashboard HTTP ${http}`);
-  return { committed: true, sha, runId };
+
+  const result = {
+    enabled: false,
+    skipped: 'dashboard sync is disabled in LP hot path',
+    requestPath,
+  };
+  if (artifactError) result.artifactError = artifactError;
+  return result;
 }
 
-function syncDashboardIfEnabled({ oldTokenId, newTokenId, lowerTick, upperTick, currentTick, used0, used1, cycleTxs }) {
-  if (!DASHBOARD_SYNC_ENABLED) {
-    return { enabled: false, skipped: 'dashboard/GitHub sync disabled; set HERMES_DASHBOARD_SYNC=1 for a release sync' };
-  }
-  updatePositionsTs({ oldTokenId, newTokenId, lowerTick, upperTick, currentTick, used0, used1, cycleTxs });
-  return { enabled: true, ...commitAndPush(newTokenId) };
-}
 
 async function statusPayload() {
   const pool = await readPool();
@@ -806,7 +767,6 @@ async function statusPayload() {
     discovery: {
       mode: 'runtime-onchain',
       candidateCount: candidateManagedTokenIds().length,
-      dashboardCandidatesIncluded: INCLUDE_DASHBOARD_CANDIDATES,
       forwardScan: DISCOVERY_FORWARD_SCAN,
     },
     pool,
@@ -841,7 +801,7 @@ async function rebalance(reason) {
   }
 
   const mint = await mintAndStake(target.lowerTick, target.upperTick);
-  const repo = syncDashboardIfEnabled({ oldTokenId, newTokenId: mint.newTokenId, lowerTick: target.lowerTick, upperTick: target.upperTick, currentTick: planningPool.currentTick, used0: mint.used0, used1: mint.used1, cycleTxs: txs });
+  const repo = writeDashboardSyncRequest({ oldTokenId, newTokenId: mint.newTokenId, lowerTick: target.lowerTick, upperTick: target.upperTick, currentTick: planningPool.currentTick, used0: mint.used0, used1: mint.used1, cycleTxs: txs });
   const stateAfter = await statusPayload();
   const result = {
     status: 'REBALANCED',

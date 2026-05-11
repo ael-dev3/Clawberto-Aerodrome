@@ -145,18 +145,38 @@ describe('Aerodrome LP supervisor precheck stale-state behavior', () => {
     expect(output.recommendedAction).not.toBe('STRICT_CLI_REBALANCE_REVIEW');
   });
 
-  it('wakes review-only after 2 consecutive soft-stale supervisor samples', () => {
+  it('keeps repeated benign HOLD/in-range soft-stale samples silent before the alert threshold', () => {
     const runDir = tempRunDir();
     const first = runPrecheck({ runDir, state: holdInRangeState(34) });
     const second = runPrecheck({ runDir, state: holdInRangeState(34) });
 
     expect(first.output.wakeAgent).toBe(false);
     expect(first.health.consecutive_stale_runs).toBe(1);
-    expect(second.output.wakeAgent).toBe(true);
+    expect(second.output.wakeAgent).toBe(false);
     expect(second.output.actionRequired).toBe(false);
-    expect(second.output.recommendedAction).toBe('ALERT_REVIEW_ONLY');
-    expect(second.output.reason).toBe('watcher_state_repeated_stale');
+    expect(second.output.recommendedAction).toBe('HOLD');
+    expect(second.output.reason).toBe('watcher_state_soft_stale');
     expect(second.health.consecutive_stale_runs).toBe(2);
+  });
+
+  it('does not silence soft-stale HOLD/in-range state without edge-distance evidence', () => {
+    const { output } = runPrecheck({
+      state: holdInRangeState(34, {
+        range: {
+          tokenId: 357764,
+          currentTick: -364945,
+          lowerTick: -365000,
+          upperTick: -364800,
+          inRange: true,
+          desiredMismatch: false,
+        },
+      }),
+    });
+
+    expect(output.wakeAgent).toBe(true);
+    expect(output.actionRequired).toBe(false);
+    expect(output.recommendedAction).toBe('ALERT_REVIEW_ONLY');
+    expect(output.reason).toBe('watcher_state_stale_action_suppressed');
   });
 
   it('wakes immediately when watcher heartbeat reports ERROR', () => {
