@@ -2,7 +2,6 @@ import {
   estimatedFeeAprPct,
   formatUsd,
   percentFormat,
-  profitabilityIndex,
   rangeStatus,
   rawToDecimal,
   tickLabel,
@@ -26,6 +25,8 @@ import {
   walletUsdValue,
 } from './position-valuation';
 import { trackedPositionAddresses, type DashboardSnapshot, type PairMarketSnapshot, type TrackedWalletSnapshot } from './rpc';
+import { scoreWalletTiers, type WalletTierInput, type WalletTierScore } from './tier-score';
+import type { WalletUptimeStats } from './uptime';
 
 interface PortfolioSummary {
   valueUsd: number;
@@ -35,7 +36,6 @@ interface PortfolioSummary {
   feeAprPct?: number;
   holdVsLpPct?: number;
   outOfRange: boolean;
-  index: number;
 }
 
 interface CompetitorSummary extends PortfolioSummary {
@@ -75,12 +75,6 @@ function signedPct(value: number | undefined, digits = 2): string {
   return `${sign}${value.toFixed(digits)}%`;
 }
 
-function scoreFormat(value: number): string {
-  if (!Number.isFinite(value)) return 'n/a';
-  if (Math.abs(value) >= 1_000) return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-  return numberFormat(value, 1);
-}
-
 function escapeAttribute(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -109,6 +103,16 @@ function weightedAverage(items: Array<{ value?: number; weight?: number }>): num
 
 function poolFeePct(snapshot: DashboardSnapshot): number {
   return snapshot.pool.fee / 1_000_000;
+}
+
+function durationFormat(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return `${hours}h ${remainder}m`;
 }
 
 function positionsForWallet(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot) {
@@ -157,15 +161,6 @@ function summarizePositions(snapshot: DashboardSnapshot, positions: typeof snaps
     feeAprPct: feeApr,
     holdVsLpPct: holdVsLp,
     outOfRange,
-    index: profitabilityIndex({
-      emissionAprPct: emissionApr,
-      feeAprPct: feeApr,
-      volatilityPct,
-      impermanentLossPct: holdVsLp,
-      pendingRewardsUsd: pendingAeroUsd,
-      portfolioUsd: valueUsd,
-      outOfRange,
-    }),
   };
 }
 
@@ -398,34 +393,70 @@ function renderVolatilityHeatmap(candles: GeckoCandle[]): string {
   `;
 }
 
-function winnerLabel(agent: CompetitorSummary, human: CompetitorSummary): string {
-  if (agent.index === human.index) return 'Even';
-  return agent.index > human.index ? 'AI agent leading' : 'Manual human leading';
+function fallbackUptime(summary: CompetitorSummary, nowMs: number): WalletUptimeStats {
+  const lastState = summary.valueUsd <= 0 ? 'noPosition' : summary.outOfRange ? 'outOfRange' : 'inRange';
+  return {
+    firstSeenMs: nowMs,
+    lastSeenMs: nowMs,
+    lastState,
+    inRangeMs: 0,
+    outOfRangeMs: 0,
+    noPositionMs: 0,
+  };
 }
 
-function renderProfitability(agent: CompetitorSummary, human: CompetitorSummary): string {
-  const relative = agent.index > 0 ? (human.index / agent.index) * 100 : human.index > 0 ? Infinity : 0;
+function competitorTierInput(
+  summary: CompetitorSummary,
+  uptimeStatsByWallet: Map<string, WalletUptimeStats> | undefined,
+  volatilityPct: number,
+  nowMs: number,
+): WalletTierInput {
+  const id = summary.wallet.address.toLowerCase();
+  return {
+    id,
+    uptime: uptimeStatsByWallet?.get(id) ?? fallbackUptime(summary, nowMs),
+    emissionAprPct: summary.emissionAprPct,
+    feeAprPct: summary.feeAprPct,
+    volatilityPct,
+    holdVsLpPct: summary.holdVsLpPct,
+    pendingRewardsUsd: summary.pendingAeroUsd,
+    lpUsd: summary.valueUsd,
+    outOfRange: summary.outOfRange,
+  };
+}
+
+function tierLine(score: WalletTierScore): string {
+  return `<span class="tier-score-line ${score.tierClass}"><b>${score.tier}</b><em>${numberFormat(score.score, 1)}</em></span>`;
+}
+
+function winnerLabel(agent: WalletTierScore, human: WalletTierScore): string {
+  if (agent.score === human.score) return 'Even';
+  return agent.score > human.score ? 'AI agent leading' : 'Manual human leading';
+}
+
+function renderProfitability(agent: CompetitorSummary, human: CompetitorSummary, agentScore: WalletTierScore, humanScore: WalletTierScore): string {
+  const relative = agentScore.score > 0 ? (humanScore.score / agentScore.score) * 100 : humanScore.score > 0 ? Infinity : 0;
   return `
     <section class="analytics-card analytics-wide">
       <header>
         <span>Manual human vs AI agent</span>
-        <strong>${winnerLabel(agent, human)}</strong>
+        <strong>${winnerLabel(agentScore, humanScore)}</strong>
       </header>
       <div class="analytics-score-grid compact">
         <div>
-          <span>AI index</span>
-          <strong>${scoreFormat(agent.index)}</strong>
-          <small>${formatUsd(agent.valueUsd)} LP / ${agent.aprPct === undefined ? 'n/a' : percentFormat(agent.aprPct, 2)} APR</small>
+          <span>AI tier</span>
+          <strong>${tierLine(agentScore)}</strong>
+          <small>${percentFormat(agentScore.uptimePct, 1)} uptime / ${durationFormat(agentScore.trackedMs)} history</small>
         </div>
         <div>
-          <span>Human index</span>
-          <strong>${scoreFormat(human.index)}</strong>
-          <small>${formatUsd(human.valueUsd)} LP / ${human.aprPct === undefined ? 'n/a' : percentFormat(human.aprPct, 2)} APR</small>
+          <span>Human tier</span>
+          <strong>${tierLine(humanScore)}</strong>
+          <small>${percentFormat(humanScore.uptimePct, 1)} uptime / ${durationFormat(humanScore.trackedMs)} history</small>
         </div>
         <div>
           <span>Score spread</span>
-          <strong>${scoreFormat(Math.abs(agent.index - human.index))}</strong>
-          <small>${human.index === 0 && agent.index > 0 ? 'manual wallet has no confirmed active LP' : `human/agent ratio ${Number.isFinite(relative) ? numberFormat(relative, 1) : 'n/a'}`}</small>
+          <strong>${numberFormat(Math.abs(agentScore.score - humanScore.score), 1)}</strong>
+          <small>${humanScore.score === 0 && agentScore.score > 0 ? 'manual wallet has no confirmed active LP' : `human/agent ratio ${Number.isFinite(relative) ? numberFormat(relative, 1) : 'n/a'}`}</small>
         </div>
         <div>
           <span>Agent APR stack</span>
@@ -438,16 +469,21 @@ function renderProfitability(agent: CompetitorSummary, human: CompetitorSummary)
           <small>rewards ${human.emissionAprPct === undefined ? 'n/a' : percentFormat(human.emissionAprPct, 2)} / fee est ${human.feeAprPct === undefined ? 'n/a' : percentFormat(human.feeAprPct, 2)}</small>
         </div>
         <div>
-          <span>Manual wallet LFI exposure</span>
-          <strong>${percentFormat(human.lfiExposurePct, 1)}</strong>
-          <small>${formatUsd(human.walletUsd)} tracked wallet value</small>
+          <span>Tier basis</span>
+          <strong>${numberFormat(agentScore.yieldScore, 1)} / ${numberFormat(humanScore.yieldScore, 1)}</strong>
+          <small>AI/human yield score, uptime weighted first</small>
         </div>
       </div>
     </section>
   `;
 }
 
-function renderContent(snapshot: DashboardSnapshot, managedCandles: GeckoCandle[], referenceCandles: GeckoCandle[]): string {
+function renderContent(
+  snapshot: DashboardSnapshot,
+  managedCandles: GeckoCandle[],
+  referenceCandles: GeckoCandle[],
+  uptimeStatsByWallet?: Map<string, WalletUptimeStats>,
+): string {
   const candlesForWindows = referenceCandles.length > 0 ? referenceCandles : managedCandles;
   const candlesForLp = managedCandles.length > 0 ? managedCandles : referenceCandles;
   const volatility = realizedVolatilityPct(candlesForLp, 24);
@@ -455,12 +491,18 @@ function renderContent(snapshot: DashboardSnapshot, managedCandles: GeckoCandle[
   const humanWallet = snapshot.trackedWallets.find((wallet) => wallet.role === 'human') ?? snapshot.trackedWallets[1] ?? snapshot.trackedWallets[0];
   const agent = summarizeCompetitor(snapshot, agentWallet, volatility);
   const human = summarizeCompetitor(snapshot, humanWallet, volatility);
+  const tierScores = new Map(scoreWalletTiers([
+    competitorTierInput(agent, uptimeStatsByWallet, volatility, snapshot.loadedAt.getTime()),
+    competitorTierInput(human, uptimeStatsByWallet, volatility, snapshot.loadedAt.getTime()),
+  ]).map((score) => [score.id, score]));
+  const agentScore = tierScores.get(agent.wallet.address.toLowerCase())!;
+  const humanScore = tierScores.get(human.wallet.address.toLowerCase())!;
 
   return `
     <div class="analytics-head">
       <div>
         <p class="eyebrow">Bottom analytics</p>
-        <h2>LFI risk, emissions, and wallet index</h2>
+        <h2>LFI risk, emissions, and tier score</h2>
       </div>
       <div class="analytics-price">
         <span>LFI</span>
@@ -477,13 +519,18 @@ function renderContent(snapshot: DashboardSnapshot, managedCandles: GeckoCandle[
     <div class="analytics-grid">
       ${renderPoolComposition(snapshot)}
       ${renderRangeSuggestion(snapshot, candlesForLp)}
-      ${renderProfitability(agent, human)}
+      ${renderProfitability(agent, human, agentScore, humanScore)}
       ${renderVolatilityHeatmap(candlesForLp)}
     </div>
   `;
 }
 
-export async function renderBottomAnalytics(snapshot: DashboardSnapshot, mount: HTMLElement, preloadedManagedCandles: GeckoCandle[] = []): Promise<void> {
+export async function renderBottomAnalytics(
+  snapshot: DashboardSnapshot,
+  mount: HTMLElement,
+  preloadedManagedCandles: GeckoCandle[] = [],
+  uptimeStatsByWallet?: Map<string, WalletUptimeStats>,
+): Promise<void> {
   mount.innerHTML = `
     <div class="analytics-loading">
       <div class="loader small"></div>
@@ -499,5 +546,5 @@ export async function renderBottomAnalytics(snapshot: DashboardSnapshot, mount: 
   ]);
   const managedCandles = managed.status === 'fulfilled' ? managed.value : [];
   const referenceCandles = reference.status === 'fulfilled' ? reference.value : [];
-  mount.innerHTML = renderContent(snapshot, managedCandles, referenceCandles);
+  mount.innerHTML = renderContent(snapshot, managedCandles, referenceCandles, uptimeStatsByWallet);
 }

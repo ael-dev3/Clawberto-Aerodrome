@@ -269,6 +269,53 @@ button {
   padding: 9px;
 }
 
+.tier-kpi,
+.tier-score-line {
+  --tier-color: var(--muted);
+  --tier-bg: rgba(154, 164, 178, 0.12);
+}
+
+.tier-kpi {
+  border-color: color-mix(in srgb, var(--tier-color) 55%, var(--line));
+  background:
+    linear-gradient(135deg, var(--tier-bg), transparent 58%),
+    var(--surface-2);
+}
+
+.tier-kpi strong,
+.tier-score-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tier-kpi strong b,
+.tier-score-line b {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--tier-color);
+  color: #071014;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.tier-kpi strong em,
+.tier-score-line em {
+  color: var(--text);
+  font-style: normal;
+}
+
+.tier-s { --tier-color: #f4d35e; --tier-bg: rgba(244, 211, 94, 0.18); }
+.tier-a { --tier-color: #35c98b; --tier-bg: rgba(53, 201, 139, 0.15); }
+.tier-b { --tier-color: #4fb3ff; --tier-bg: rgba(79, 179, 255, 0.15); }
+.tier-c { --tier-color: #9b8cff; --tier-bg: rgba(155, 140, 255, 0.14); }
+.tier-d { --tier-color: #e6b34a; --tier-bg: rgba(230, 179, 74, 0.13); }
+.tier-f { --tier-color: #f06478; --tier-bg: rgba(240, 100, 120, 0.13); }
+
 .uptime-card {
   display: grid;
   gap: 8px;

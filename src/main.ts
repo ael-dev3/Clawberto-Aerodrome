@@ -6,7 +6,6 @@ import {
   formatTokenAmount,
   formatUsd,
   percentFormat,
-  profitabilityIndex,
   rangeStatus,
   rawToDecimal,
   tickLabel,
@@ -20,6 +19,7 @@ import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
 import { renderLpRangeChart } from './lp-range-chart';
 import { poolReserveBreakdown, positionValuation, tokenSymbol, walletUsdValue } from './position-valuation';
 import { loadDashboardSnapshot, trackedPositionAddresses, type DashboardSnapshot, type LivePosition, type TrackedWalletSnapshot } from './rpc';
+import { scoreWalletTiers, type WalletTierInput, type WalletTierScore } from './tier-score';
 import { normalizeWalletUptimeStats, updateWalletUptimeStats, type WalletRangeState, type WalletUptimeStats } from './uptime';
 
 const REFRESH_MS = 15_000;
@@ -151,12 +151,6 @@ function compactNumber(value: bigint | number | null | undefined): string {
   const numeric = typeof value === 'bigint' ? Number(value) : value;
   if (!Number.isFinite(numeric)) return 'n/a';
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(numeric);
-}
-
-function scoreFormat(value: number): string {
-  if (!Number.isFinite(value)) return 'n/a';
-  if (Math.abs(value) >= 1_000) return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-  return value.toFixed(1);
 }
 
 function durationFormat(ms: number): string {
@@ -435,16 +429,6 @@ function walletLpSummary(snapshot: DashboardSnapshot, wallet: TrackedWalletSnaps
     weight: item.valuation.usd?.totalUsd,
   })));
   const primary = valuations[0];
-  const index = profitabilityIndex({
-    emissionAprPct: emissionApr,
-    feeAprPct: feeApr,
-    volatilityPct,
-    impermanentLossPct: holdVsLp,
-    pendingRewardsUsd: pendingAeroUsd,
-    portfolioUsd: lpUsd,
-    outOfRange,
-  });
-
   return {
     positions,
     lpUsd,
@@ -453,8 +437,9 @@ function walletLpSummary(snapshot: DashboardSnapshot, wallet: TrackedWalletSnaps
     emissionAprPct: emissionApr,
     feeAprPct: feeApr,
     aprPct: emissionApr,
-    index,
     rangeState,
+    holdVsLpPct: holdVsLp,
+    outOfRange,
     status: primary?.status,
     lfiSidePct: lpUsd > 0 ? (token0Usd / lpUsd) * 100 : undefined,
     usdcSidePct: lpUsd > 0 ? (token1Usd / lpUsd) * 100 : undefined,
@@ -469,6 +454,29 @@ function updateWalletUptime(wallet: TrackedWalletSnapshot, state: WalletRangeSta
   walletUptimeStats.set(key, current);
   persistUptime();
   return current;
+}
+
+function tierInput(wallet: TrackedWalletSnapshot, summary: ReturnType<typeof walletLpSummary>, uptime: WalletUptimeStats, volatilityPct: number): WalletTierInput {
+  return {
+    id: wallet.address.toLowerCase(),
+    uptime,
+    emissionAprPct: summary.emissionAprPct,
+    feeAprPct: summary.feeAprPct,
+    volatilityPct,
+    holdVsLpPct: summary.holdVsLpPct,
+    pendingRewardsUsd: summary.pendingAeroUsd,
+    lpUsd: summary.lpUsd,
+    outOfRange: summary.outOfRange,
+  };
+}
+
+function renderTierScore(score: WalletTierScore): string {
+  return `
+        <div class="tier-kpi ${score.tierClass}">
+          <span>Tier score</span>
+          <strong><b>${score.tier}</b><em>${numberFormat(score.score, 1)}</em></strong>
+          <small>${percentFormat(score.uptimePct, 1)} uptime / ${durationFormat(score.trackedMs)} history</small>
+        </div>`;
 }
 
 function renderUptime(stats: WalletUptimeStats, state: WalletRangeState): string {
@@ -497,11 +505,16 @@ function renderUptime(stats: WalletUptimeStats, state: WalletRangeState): string
   `;
 }
 
-function renderWalletLpPanel(snapshot: DashboardSnapshot, wallet: TrackedWalletSnapshot, index: number, volatilityPct: number): string {
+function renderWalletLpPanel(
+  snapshot: DashboardSnapshot,
+  wallet: TrackedWalletSnapshot,
+  index: number,
+  summary: ReturnType<typeof walletLpSummary>,
+  uptime: WalletUptimeStats,
+  tierScore: WalletTierScore,
+): string {
   const walletUsd = walletUsdValue(snapshot, wallet.balances);
-  const summary = walletLpSummary(snapshot, wallet, volatilityPct);
   const totalTrackedUsd = walletUsd + summary.lpUsd;
-  const uptime = updateWalletUptime(wallet, summary.rangeState, snapshot.loadedAt.getTime());
   const status = summary.status?.state ?? (summary.positions.length > 0 ? 'READABLE' : 'NO_ACTIVE_LP');
   const sideSplit = summary.lfiSidePct === undefined || summary.usdcSidePct === undefined
     ? 'n/a'
@@ -521,7 +534,7 @@ function renderWalletLpPanel(snapshot: DashboardSnapshot, wallet: TrackedWalletS
         <span class="status ${stateClass(status)}">${statusLabel(status)}</span>
       </header>
       <div class="wallet-kpi-grid">
-        <div><span>Profitability</span><strong>${scoreFormat(summary.index)}</strong><small>history-based index</small></div>
+        ${renderTierScore(tierScore)}
         <div><span>Active LP</span><strong>${formatUsd(summary.lpUsd)}</strong><small>${summary.positions.length} NFT${summary.positions.length === 1 ? '' : 's'} / ${custodySummary(summary.positions, wallet)}</small></div>
         <div><span>APR</span><strong>${summary.aprPct === undefined ? 'n/a' : percentFormat(summary.aprPct, 2)}</strong><small>${aprBreakdown(summary, summary.positions)}</small></div>
         <div><span>Pending</span><strong>${formatTokenAmount(summary.pendingAero, 18, 4)} AERO</strong><small>${summary.positions.length === 0 ? 'no active LP' : summary.positions.some((position) => position.staked) ? formatUsd(summary.pendingAeroUsd) : 'not gauge-staked'}</small></div>
@@ -539,6 +552,14 @@ function renderRangeConsole(snapshot: DashboardSnapshot, historicalCandles: Geck
   const price = tickToAdjustedPrice(snapshot.pool.currentTick, 18, 6);
   const volatilityPct = realizedVolatilityPct(historicalCandles, 24);
   const readablePositions = snapshot.positions.filter((position) => !position.liveError && position.tickLower !== undefined && position.tickUpper !== undefined);
+  const panelModels = snapshot.trackedWallets.map((wallet, index) => {
+    const summary = walletLpSummary(snapshot, wallet, volatilityPct);
+    const uptime = updateWalletUptime(wallet, summary.rangeState, snapshot.loadedAt.getTime());
+    return { wallet, index, summary, uptime };
+  });
+  const tierScores = new Map(scoreWalletTiers(panelModels.map((model) =>
+    tierInput(model.wallet, model.summary, model.uptime, volatilityPct),
+  )).map((score) => [score.id, score]));
 
   return `
     <section class="range-console" data-section="range-control">
@@ -554,7 +575,15 @@ function renderRangeConsole(snapshot: DashboardSnapshot, historicalCandles: Geck
         </div>
       </div>
       <div class="wallet-compare-grid">
-        ${snapshot.trackedWallets.map((wallet, index) => renderWalletLpPanel(snapshot, wallet, index, volatilityPct)).join('')}
+        ${panelModels.map((model) =>
+          renderWalletLpPanel(
+            snapshot,
+            model.wallet,
+            model.index,
+            model.summary,
+            model.uptime,
+            tierScores.get(model.wallet.address.toLowerCase())!,
+          )).join('')}
       </div>
     </section>
   `;
@@ -655,7 +684,7 @@ function renderDashboard(snapshot: DashboardSnapshot, historicalCandles: GeckoCa
     }
   });
   const analyticsMount = document.querySelector<HTMLElement>('#analytics-bottom');
-  if (analyticsMount) void renderBottomAnalytics(snapshot, analyticsMount, historicalCandles);
+  if (analyticsMount) void renderBottomAnalytics(snapshot, analyticsMount, historicalCandles, walletUptimeStats);
 }
 
 async function refresh(): Promise<void> {
