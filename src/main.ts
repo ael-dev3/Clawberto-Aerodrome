@@ -25,15 +25,17 @@ import { scoreWalletTiers, type WalletTierInput, type WalletTierScore } from './
 import { normalizeWalletUptimeStats, updateWalletUptimeStats, type WalletRangeState, type WalletUptimeStats } from './uptime';
 
 const REFRESH_MS = 15_000;
-const PERFORMANCE_EPOCH_KEY = 'performance-reset-2026-05-11T16-27-18+02-00';
-const UPTIME_STORAGE_KEY = `clawberto-range-uptime-v5-${PERFORMANCE_EPOCH_KEY}`;
-const PNL_STORAGE_KEY = `clawberto-overall-pnl-v3-${PERFORMANCE_EPOCH_KEY}`;
+const PNL_EPOCH_KEY = 'performance-reset-2026-05-11T16-27-18+02-00';
+const UPTIME_EPOCH_KEY = 'uptime-reset-2026-05-11T20-21-33+02-00';
+const UPTIME_STORAGE_KEY = `clawberto-range-uptime-v5-${UPTIME_EPOCH_KEY}`;
+const PNL_STORAGE_KEY = `clawberto-overall-pnl-v3-${PNL_EPOCH_KEY}`;
 const PNL_POSITION_SET_KEY = 'performance-cycle';
 const LEGACY_UPTIME_STORAGE_KEYS = [
   'clawberto-range-uptime-v1',
   'clawberto-range-uptime-v2-reset-2026-05-11',
   'clawberto-range-uptime-v3-pnl-reset-2026-05-11',
   'clawberto-range-uptime-v4-performance-reset-2026-05-11T16-20-36+02-00',
+  'clawberto-range-uptime-v5-performance-reset-2026-05-11T16-27-18+02-00',
 ];
 const LEGACY_PNL_STORAGE_KEYS = [
   'clawberto-overall-pnl-v1-reset-2026-05-11',
