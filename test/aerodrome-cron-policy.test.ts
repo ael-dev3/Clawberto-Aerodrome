@@ -61,6 +61,11 @@ describe('Aerodrome one-cron operational policy', () => {
     expect(cronScript).toContain('idle capital');
   });
 
+  it('defaults slippage to the strict 30 bps policy instead of 2000 bps', () => {
+    expect(cronScript).toContain("const SLIPPAGE_BPS = BigInt(process.env.HERMES_SLIPPAGE_BPS || '30');");
+    expect(cronScript).not.toContain("HERMES_SLIPPAGE_BPS || '2000'");
+  });
+
   it('keeps launchd cadence at 60 seconds to reduce system/RPC pressure', () => {
     expect(launchdPlist).toContain('<key>StartInterval</key>');
     expect(launchdPlist.match(/<key>StartInterval<\/key>/g)).toHaveLength(1);

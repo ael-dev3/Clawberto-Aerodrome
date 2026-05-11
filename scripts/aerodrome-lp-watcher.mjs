@@ -8,14 +8,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, '..');
 const RUN_DIR = path.join(REPO, 'runs', 'aerodrome-lp-supervisor');
 const STATE_PATH = path.join(RUN_DIR, 'state.json');
+const HEARTBEAT_PATH = path.join(RUN_DIR, 'watcher-heartbeat.json');
 const LOCK_PATH = path.join(RUN_DIR, 'watcher.lock');
 const ACTION_STATE_PATH = path.join(RUN_DIR, 'last-action.json');
 const ONE_CRON_STATE_PATH = path.join(REPO, 'runs', 'aerodrome-one-cron', 'state.json');
+const STATUS_COMMAND_TIMEOUT_MS = 45_000;
 
 const POLICY = {
   poll_seconds: 15,
   hermes_supervisor_schedule: 'every 1m',
-  state_max_age_seconds: 20,
+  action_state_max_age_seconds: 20,
+  alert_state_max_age_seconds: 60,
   min_rebalance_cooldown_seconds: 600,
   max_actions_per_run: 1,
   edge_trigger: {
@@ -44,6 +47,15 @@ function writeJsonAtomic(file, value) {
   writeFileSync(tmp, `${stringifyJson(value)}\n`);
   renameSync(tmp, file);
 }
+function writeHeartbeat(value) { writeJsonAtomic(HEARTBEAT_PATH, value); }
+function previousSuccessAt() {
+  const state = readJson(STATE_PATH, null);
+  return state?.last_success_at || state?.watcher_finished_at || state?.at || null;
+}
+function previousConsecutiveErrors() {
+  const heartbeat = readJson(HEARTBEAT_PATH, null);
+  return Number(heartbeat?.consecutive_errors || 0);
+}
 function pidIsAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch { return false; }
@@ -54,8 +66,16 @@ function acquireLock() {
     const lock = readJson(LOCK_PATH, {});
     const ageMs = Date.now() - Date.parse(lock.at || 0);
     if (pidIsAlive(Number(lock.pid)) && Number.isFinite(ageMs) && ageMs < 120_000) {
-      const locked = { status: 'LOCKED', wakeAgent: false, at: nowIso(), lock, policy: POLICY };
-      writeJsonAtomic(STATE_PATH, locked);
+      const locked = {
+        status: 'LOCKED',
+        wakeAgent: false,
+        at: nowIso(),
+        lock,
+        policy: POLICY,
+        last_success_at: previousSuccessAt(),
+        consecutive_errors: previousConsecutiveErrors(),
+      };
+      writeHeartbeat(locked);
       console.log(stringifyJson(locked));
       process.exit(0);
     }
@@ -72,7 +92,7 @@ function runStatus() {
       ['scripts/aerodrome-one-cron-rebalance.mjs', '--status'],
       {
         cwd: REPO,
-        timeout: 45_000,
+        timeout: STATUS_COMMAND_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
         env: { ...process.env, HERMES_LP_EXECUTE: '0', HERMES_DISCOVERY_FORWARD_SCAN: '0' },
       },
@@ -133,7 +153,7 @@ function idleTokenUsdFromStatus(status, currentTick) {
   return Number(lfiRaw) / 1e18 * tickPrice(currentTick) + Number(usdcRaw) / 1e6;
 }
 
-function analyzeStatus(status) {
+function analyzeStatus(status, runHealth) {
   const statusAtMs = Date.parse(status.at || 0);
   const status_age_seconds = Number.isFinite(statusAtMs) ? Math.max(0, (Date.now() - statusAtMs) / 1000) : Infinity;
   const currentTick = Number(status.pool?.currentTick);
@@ -154,7 +174,7 @@ function analyzeStatus(status) {
   const nearEdge = !inRange || percentOfHalfWidth <= POLICY.edge_trigger.trigger_at_percent_of_half_width || desiredMismatch;
   const lastActionAgeSeconds = latestActionAgeSeconds();
   const cooldownActive = lastActionAgeSeconds < POLICY.min_rebalance_cooldown_seconds;
-  const stale = status_age_seconds > POLICY.state_max_age_seconds;
+  const stale = status_age_seconds >= POLICY.action_state_max_age_seconds;
   const missingData = !Number.isFinite(currentTick) || !Number.isFinite(lowerTick) || !Number.isFinite(upperTick) || !status.tokenId;
 
   const reasons = [];
@@ -177,7 +197,13 @@ function analyzeStatus(status) {
 
   return {
     status: 'WATCHED',
-    at: nowIso(),
+    at: runHealth.watcher_finished_at,
+    watcher_started_at: runHealth.watcher_started_at,
+    watcher_finished_at: runHealth.watcher_finished_at,
+    status_runtime_ms: runHealth.status_runtime_ms,
+    last_success_at: runHealth.watcher_finished_at,
+    consecutive_errors: 0,
+    status_command_timeout_ms: STATUS_COMMAND_TIMEOUT_MS,
     wakeAgent,
     actionRequired,
     recommendedAction,
@@ -223,28 +249,68 @@ function analyzeStatus(status) {
 }
 
 async function main() {
+  const startMs = Date.now();
+  const watcherStartedAt = nowIso();
   acquireLock();
+  const baseHeartbeat = {
+    status: 'RUNNING',
+    at: watcherStartedAt,
+    watcher_started_at: watcherStartedAt,
+    status_command_timeout_ms: STATUS_COMMAND_TIMEOUT_MS,
+    last_success_at: previousSuccessAt(),
+    consecutive_errors: previousConsecutiveErrors(),
+    policy: POLICY,
+  };
+  writeHeartbeat(baseHeartbeat);
+
   try {
     const stdout = await runStatus();
     const status = JSON.parse(stdout);
-    const state = analyzeStatus(status);
+    const watcherFinishedAt = nowIso();
+    const statusRuntimeMs = Date.now() - startMs;
+    const runHealth = {
+      watcher_started_at: watcherStartedAt,
+      watcher_finished_at: watcherFinishedAt,
+      status_runtime_ms: statusRuntimeMs,
+    };
+    const state = analyzeStatus(status, runHealth);
+    const heartbeat = {
+      status: 'OK',
+      at: watcherFinishedAt,
+      watcher_started_at: watcherStartedAt,
+      watcher_finished_at: watcherFinishedAt,
+      status_runtime_ms: statusRuntimeMs,
+      last_success_at: watcherFinishedAt,
+      consecutive_errors: 0,
+      status_command_timeout_ms: STATUS_COMMAND_TIMEOUT_MS,
+      policy: POLICY,
+    };
     writeJsonAtomic(STATE_PATH, state);
+    writeHeartbeat(heartbeat);
     console.log(stringifyJson(state));
   } catch (error) {
-    const failure = {
+    const watcherFinishedAt = nowIso();
+    const consecutiveErrors = previousConsecutiveErrors() + 1;
+    const errorHeartbeat = {
       status: 'ERROR',
-      at: nowIso(),
+      at: watcherFinishedAt,
+      watcher_started_at: watcherStartedAt,
+      watcher_finished_at: watcherFinishedAt,
+      status_runtime_ms: Date.now() - startMs,
       wakeAgent: true,
       actionRequired: false,
       recommendedAction: 'ALERT_REVIEW_ONLY',
       reasons: ['watcher_error'],
       policy: POLICY,
+      last_success_at: previousSuccessAt(),
+      consecutive_errors: consecutiveErrors,
+      status_command_timeout_ms: STATUS_COMMAND_TIMEOUT_MS,
       error: String(error?.message || error),
       stdout: error?.stdout?.slice?.(0, 4000) || '',
       stderr: error?.stderr?.slice?.(0, 4000) || '',
     };
-    writeJsonAtomic(STATE_PATH, failure);
-    console.log(stringifyJson(failure));
+    writeHeartbeat(errorHeartbeat);
+    console.log(stringifyJson(errorHeartbeat));
     process.exitCode = 1;
   } finally {
     releaseLock();

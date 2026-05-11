@@ -35,11 +35,28 @@ describe('Aerodrome deterministic watcher + Hermes supervisor architecture', () 
     expect(watcherScript).toContain('wakeAgent');
   });
 
-  it('uses a Hermes precheck script that suppresses the agent unless state is actionable', () => {
+  it('uses a Hermes precheck script with split action/alert freshness thresholds', () => {
     expect(supervisorPrecheck).toContain('wakeAgent');
-    expect(supervisorPrecheck).toContain('state_max_age_seconds');
+    expect(supervisorPrecheck).toContain('action_state_max_age_seconds');
+    expect(supervisorPrecheck).toContain('alert_state_max_age_seconds');
+    expect(supervisorPrecheck).toContain('precheck-health.json');
+    expect(supervisorPrecheck).toContain('watcher_state_soft_stale');
+    expect(supervisorPrecheck).toContain('watcher_state_repeated_stale');
     expect(supervisorPrecheck).toContain('max_actions_per_run');
     expect(supervisorPrecheck).toContain('wakeAgent = False');
     expect(supervisorPrecheck).not.toContain('eth_sendTransaction');
+  });
+
+  it('keeps LOCKED/RUNNING/ERROR watcher heartbeat separate from LP observation state', () => {
+    expect(watcherScript).toContain('HEARTBEAT_PATH');
+    expect(watcherScript).toContain('watcher-heartbeat.json');
+    expect(watcherScript).not.toContain('writeJsonAtomic(STATE_PATH, locked)');
+    expect(watcherScript).not.toContain('writeJsonAtomic(STATE_PATH, failure)');
+    expect(watcherScript).toContain('watcher_started_at');
+    expect(watcherScript).toContain('watcher_finished_at');
+    expect(watcherScript).toContain('status_runtime_ms');
+    expect(watcherScript).toContain('last_success_at');
+    expect(watcherScript).toContain('consecutive_errors');
+    expect(watcherScript).toContain('status_command_timeout_ms');
   });
 });

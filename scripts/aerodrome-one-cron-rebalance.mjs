@@ -46,7 +46,7 @@ const CONTRACTS = {
 
 const TICK_SPACING = 200;
 const DESIRED_WIDTH_TICKS = 200;
-const SLIPPAGE_BPS = BigInt(process.env.HERMES_SLIPPAGE_BPS || '2000');
+const SLIPPAGE_BPS = BigInt(process.env.HERMES_SLIPPAGE_BPS || '30');
 const ETH_GAS_RESERVE_USD = Number(process.env.HERMES_ETH_GAS_RESERVE_USD || '1.5');
 const MIN_ETH_SWAP_USD = Number(process.env.HERMES_MIN_ETH_SWAP_USD || '0.25');
 const MIN_ETH_SWAP_WEI = 50_000_000_000_000n;
