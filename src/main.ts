@@ -20,20 +20,11 @@ import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
 import { renderLpRangeChart } from './lp-range-chart';
 import { poolReserveBreakdown, positionValuation, tokenSymbol, walletUsdValue } from './position-valuation';
 import { loadDashboardSnapshot, trackedPositionAddresses, type DashboardSnapshot, type LivePosition, type TrackedWalletSnapshot } from './rpc';
+import { normalizeWalletUptimeStats, updateWalletUptimeStats, type WalletRangeState, type WalletUptimeStats } from './uptime';
 
 const REFRESH_MS = 15_000;
 const UPTIME_STORAGE_KEY = 'clawberto-range-uptime-v1';
 const app = document.querySelector<HTMLDivElement>('#app') ?? failMissingRoot();
-type WalletRangeState = 'inRange' | 'outOfRange' | 'noPosition';
-
-interface WalletUptimeStats {
-  firstSeenMs: number;
-  lastSeenMs: number;
-  lastState: WalletRangeState;
-  inRangeMs: number;
-  outOfRangeMs: number;
-  noPositionMs: number;
-}
 
 const walletUptimeStats = loadPersistedUptime();
 
@@ -44,43 +35,14 @@ function failMissingRoot(): never {
 let refreshTimer: number | undefined;
 let tooltipNode: HTMLDivElement | undefined;
 
-function isWalletRangeState(value: unknown): value is WalletRangeState {
-  return value === 'inRange' || value === 'outOfRange' || value === 'noPosition';
-}
-
 function loadPersistedUptime(): Map<string, WalletUptimeStats> {
   try {
     const raw = window.localStorage.getItem(UPTIME_STORAGE_KEY);
     if (!raw) return new Map();
     const parsed = JSON.parse(raw) as Record<string, Partial<WalletUptimeStats>>;
     const entries: Array<[string, WalletUptimeStats]> = Object.entries(parsed).flatMap(([key, value]) => {
-      const lastSeenMs = value?.lastSeenMs;
-      const firstSeenMs = value?.firstSeenMs;
-      const inRangeMs = value?.inRangeMs;
-      const outOfRangeMs = value?.outOfRangeMs;
-      const noPositionMs = value?.noPositionMs;
-      const lastState = value?.lastState;
-      if (
-        typeof lastSeenMs !== 'number' ||
-        !Number.isFinite(lastSeenMs) ||
-        !isWalletRangeState(lastState) ||
-        typeof inRangeMs !== 'number' ||
-        !Number.isFinite(inRangeMs) ||
-        typeof outOfRangeMs !== 'number' ||
-        !Number.isFinite(outOfRangeMs) ||
-        typeof noPositionMs !== 'number' ||
-        !Number.isFinite(noPositionMs)
-      ) {
-        return [];
-      }
-      return [[key, {
-        firstSeenMs: typeof firstSeenMs === 'number' && Number.isFinite(firstSeenMs) ? firstSeenMs : lastSeenMs,
-        lastSeenMs,
-        lastState,
-        inRangeMs: Math.max(0, inRangeMs),
-        outOfRangeMs: Math.max(0, outOfRangeMs),
-        noPositionMs: Math.max(0, noPositionMs),
-      }]];
+      const stats = normalizeWalletUptimeStats(value);
+      return stats ? [[key, stats]] : [];
     });
     return new Map(entries);
   } catch {
@@ -493,22 +455,7 @@ function walletLpSummary(snapshot: DashboardSnapshot, wallet: TrackedWalletSnaps
 
 function updateWalletUptime(wallet: TrackedWalletSnapshot, state: WalletRangeState, nowMs: number): WalletUptimeStats {
   const key = wallet.address.toLowerCase();
-  const current = walletUptimeStats.get(key) ?? {
-    firstSeenMs: nowMs,
-    lastSeenMs: nowMs,
-    lastState: state,
-    inRangeMs: 0,
-    outOfRangeMs: 0,
-    noPositionMs: 0,
-  };
-  const elapsedMs = Math.max(0, Math.min(REFRESH_MS * 2, nowMs - current.lastSeenMs));
-  if (elapsedMs > 0) {
-    if (current.lastState === 'inRange') current.inRangeMs += elapsedMs;
-    if (current.lastState === 'outOfRange') current.outOfRangeMs += elapsedMs;
-    if (current.lastState === 'noPosition') current.noPositionMs += elapsedMs;
-  }
-  current.lastSeenMs = nowMs;
-  current.lastState = state;
+  const current = updateWalletUptimeStats(walletUptimeStats.get(key), state, nowMs);
   walletUptimeStats.set(key, current);
   persistUptime();
   return current;
