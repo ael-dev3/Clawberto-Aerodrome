@@ -125,7 +125,7 @@ Weak-LLM-safe gates copied from the Kittenswap control plane:
 4. Remove old liquidity in fixed order: `collect -> decreaseLiquidity -> collect`; `burn` only with explicit close intent after liquidity and owed tokens are zero.
 5. Mint replacement CL positions through `NonfungiblePositionManager.mint((address,address,int24,int24,int24,uint256,uint256,uint256,uint256,address,uint256,uint160))`, with token order normalized, ticks aligned to `200`, ERC20 approvals targeting the NFT manager, and fresh direct simulation before signing.
 6. Post-mint managed strategy defaults to immediate gauge staking: approve NFT to gauge, `deposit(uint256)`, then verify `ownerOf(tokenId) == gauge` and `stakedContains(depositor, tokenId)`.
-7. Every LP enter/exit/rebalance must verify on-chain post-state and persist runtime state before reporting LP-control completion. `src/positions.ts`, position-history, and GitHub Pages updates are opt-in release/dashboard sync work, not the 30-second hot path.
+7. Every LP enter/exit/rebalance must verify on-chain post-state and persist runtime state before reporting LP-control completion. `src/positions.ts`, position-history, and GitHub Pages updates are opt-in release/dashboard sync work, not the scheduled LP-control hot path.
 8. All execution support remains plan/verification-first. Do not claim an on-chain action was executed unless a signed tx hash is verified.
 
 ## Output

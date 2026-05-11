@@ -40,7 +40,7 @@ The repository also contains `scripts/aerodrome-one-cron-rebalance.mjs`, a user-
 - re-read `slot0` immediately before gauge deposit; if the fresh one-tick NFT moved out of range, close it instead of leaving it unstaked
 - apply `HERMES_REBALANCE_COOLDOWN_SECONDS` to range-churn rebalances while still allowing stake-remediation and orphan-cleanup actions
 - reject dust mints below `HERMES_MIN_POSITION_USD`
-- keep LP uptime/profitability as the hot-path priority. The 30-second loop must not run git pull/rebase, tests/build, commits, pushes, or Pages verification. Dashboard/source sync is a separate opt-in release action enabled only with `HERMES_DASHBOARD_SYNC=1`.
+- keep LP uptime/profitability as the hot-path priority. The scheduled loop must not run git pull/rebase, tests/build, commits, pushes, or Pages verification. Dashboard/source sync is a separate opt-in release action enabled only with `HERMES_DASHBOARD_SYNC=1`.
 
 For principal rebalances, use this order:
 

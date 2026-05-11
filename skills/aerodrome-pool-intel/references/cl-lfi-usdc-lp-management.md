@@ -76,7 +76,7 @@ NFT `341439` on `0xe1f8cd9AC4e4A65F54f38a5CdAfCA44f6dD68b53`:
 
 ## Dashboard sync policy
 
-Every managed LP enter, exit, rebalance, claim, or no-position transition must verify on-chain post-state and persist runtime state before LP-control completion. The public dashboard is optional release sync, not the 30-second control-loop source of truth:
+Every managed LP enter, exit, rebalance, claim, or no-position transition must verify on-chain post-state and persist runtime state before LP-control completion. The public dashboard is optional release sync, not the scheduled LP-control source of truth:
 
 1. Keep active LP discovery based on chain/runtime state, not hardcoded dashboard data.
 2. Leave `HERMES_DASHBOARD_SYNC=0` in the hot path unless a dashboard release is explicitly requested.
@@ -240,7 +240,7 @@ Until those commands exist, do not claim execution support. Use this reference t
 
 ## May 10, 2026 one-cron remediation findings
 
-Observed failure mode from the aggressive 30s one-tick run:
+Observed failure mode from the aggressive sub-minute one-tick run:
 
 - The dashboard tracked burned NFT `#345395` while several failed one-cron leftovers were still wallet-owned and unstaked.
 - Wallet-owned out-of-range leftovers found and closed: `#345349`, `#345384`, `#345412`; additional orphan discovered from one-cron logs/state and closed: `#345174`.
@@ -252,7 +252,7 @@ Workflow rules added from this incident:
 2. Failed mints must be persisted before approve/deposit. If stake fails or the tick moves out before deposit, close the fresh wallet-owned NFT immediately or persist it for next-cycle cleanup.
 3. Re-read `slot0` immediately before gauge `deposit`. One-tick CL200 ranges can move out of range between mint and stake.
 4. For wallet-owned out-of-range leftovers with `tokensOwed0 == tokensOwed1 == 0`, the successful close path was `decreaseLiquidity -> collect -> burn`; collect-first is still valid when owed fees are already nonzero, but a collect-only tx can waste gas if there is nothing currently owed.
-5. Use a churn brake: keep the scheduler at 30s if requested, but set `HERMES_REBALANCE_COOLDOWN_SECONDS` so range drift does not continuously burn gas. Stake remediation and orphan cleanup bypass the churn cooldown.
+5. Default to a 60s scheduler for better uptime and lower system/RPC pressure unless Ael explicitly asks for a different cadence; keep `HERMES_REBALANCE_COOLDOWN_SECONDS` so range drift does not continuously burn gas. Stake remediation and orphan cleanup bypass the churn cooldown.
 6. Reject dust mints with `HERMES_MIN_POSITION_USD`; otherwise a drained wallet can mint microscopic positions that cannot justify gas.
 7. If a recovered wallet-owned NFT is still in range and has liquidity, stake it instead of leaving it as an unstaked active-range orphan; then display it on the dashboard.
 8. Mint with a small ERC-20 balance haircut instead of exact full wallet balances; exact-full-balance mints can revert `STF` after volatile swaps even when allowance looks sufficient.

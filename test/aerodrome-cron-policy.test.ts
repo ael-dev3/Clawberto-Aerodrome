@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import launchdPlist from '../ops/launchd/com.clawberto.aerodrome.onecron.plist?raw';
 import cronScript from '../scripts/aerodrome-one-cron-rebalance.mjs?raw';
 import launchdWrapper from '../scripts/aerodrome-one-cron-launchd.sh?raw';
 
@@ -51,7 +52,14 @@ describe('Aerodrome one-cron operational policy', () => {
     expect(simulateBody).toContain('writeContract({ ...request, gas })');
   });
 
-  it('does not run git synchronization from the 30-second launchd loop', () => {
+  it('keeps launchd cadence at 60 seconds to reduce system/RPC pressure', () => {
+    expect(launchdPlist).toContain('<key>StartInterval</key>');
+    expect(launchdPlist.match(/<key>StartInterval<\/key>/g)).toHaveLength(1);
+    expect(launchdPlist).toContain('<integer>60</integer>');
+    expect(launchdPlist).not.toContain('<integer>30</integer>');
+  });
+
+  it('does not run git synchronization from the 60-second launchd loop', () => {
     expect(launchdWrapper).not.toMatch(/git\s+(pull|status|push|commit|add)\b/);
     expect(launchdWrapper).toContain('node scripts/aerodrome-one-cron-rebalance.mjs --cron');
   });
