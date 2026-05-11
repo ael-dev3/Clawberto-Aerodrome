@@ -23,9 +23,11 @@ import { loadDashboardSnapshot, trackedPositionAddresses, type DashboardSnapshot
 import { normalizeWalletUptimeStats, updateWalletUptimeStats, type WalletRangeState, type WalletUptimeStats } from './uptime';
 
 const REFRESH_MS = 15_000;
-const UPTIME_STORAGE_KEY = 'clawberto-range-uptime-v1';
+const UPTIME_STORAGE_KEY = 'clawberto-range-uptime-v2-reset-2026-05-11';
+const LEGACY_UPTIME_STORAGE_KEYS = ['clawberto-range-uptime-v1'];
 const app = document.querySelector<HTMLDivElement>('#app') ?? failMissingRoot();
 
+clearLegacyUptime();
 const walletUptimeStats = loadPersistedUptime();
 
 function failMissingRoot(): never {
@@ -34,6 +36,14 @@ function failMissingRoot(): never {
 
 let refreshTimer: number | undefined;
 let tooltipNode: HTMLDivElement | undefined;
+
+function clearLegacyUptime(): void {
+  try {
+    LEGACY_UPTIME_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
+  } catch {
+    // localStorage can be unavailable in restrictive browser contexts; fresh in-memory tracking still works.
+  }
+}
 
 function loadPersistedUptime(): Map<string, WalletUptimeStats> {
   try {
