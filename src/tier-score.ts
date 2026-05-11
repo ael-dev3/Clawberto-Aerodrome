@@ -90,9 +90,9 @@ function tierFor(score: Omit<WalletTierScore, 'tier' | 'tierClass' | 'id'>): Per
     return 'S';
   }
   if (score.score >= 88 && score.trackedMs >= 3 * DAY_MS && score.uptimePct >= 97 && score.activePct >= 98) return 'A';
-  if (score.score >= 72 && score.trackedMs >= DAY_MS && score.uptimePct >= 78 && score.activePct >= 90) return 'B';
-  if (score.score >= 58 && score.uptimePct >= 55) return 'C';
-  if (score.score >= 38) return 'D';
+  if (score.score >= 50 && score.uptimePct >= 50 && score.activePct >= 90) return 'B';
+  if (score.score >= 42 && score.uptimePct >= 35) return 'C';
+  if (score.score >= 32) return 'D';
   return 'F';
 }
 

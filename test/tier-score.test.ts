@@ -64,17 +64,32 @@ describe('wallet tier scores', () => {
     expect(score.tier).toBe('B');
   });
 
-  it('does not punish 80 percent uptime into D tier during early tracking', () => {
+  it('allows above 50 percent uptime to reach B when the LP stays active', () => {
     const [score] = scoreWalletTiers([{
-      id: 'fresh-narrow',
-      uptime: uptime(4.8 * hour, 1.2 * hour),
+      id: 'narrow-majority',
+      uptime: uptime(3.1 * hour, 2.9 * hour),
       emissionAprPct: 22,
       feeAprPct: 2,
       lpUsd: 100,
     }]);
 
-    expect(score.uptimePct).toBeCloseTo(80, 1);
-    expect(score.tier).toBe('C');
+    expect(score.uptimePct).toBeGreaterThan(50);
+    expect(score.activePct).toBe(100);
+    expect(score.tier).toBe('B');
+  });
+
+  it('does not give B to above 50 percent uptime when no-position time dominates', () => {
+    const [score] = scoreWalletTiers([{
+      id: 'inactive-majority',
+      uptime: uptime(3.1 * hour, 0, 2.9 * hour),
+      emissionAprPct: 22,
+      feeAprPct: 2,
+      lpUsd: 100,
+    }]);
+
+    expect(score.uptimePct).toBeGreaterThan(50);
+    expect(score.activePct).toBeLessThan(90);
+    expect(score.tier).not.toBe('B');
   });
 
   it('keeps S tier reserved for long, near-perfect uptime and strong yield', () => {
