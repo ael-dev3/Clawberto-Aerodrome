@@ -30,17 +30,26 @@ Hermes may automate monitoring and plan generation from cron. It must not silent
 
 Transaction-intent plans are instructions, not proof of execution. They may include target contracts, function signatures, sender requirements, and blocking conditions. They must not claim a tx happened without a verified hash and post-state check.
 
-## Live one-cron executor exception
+## Deterministic watcher + Hermes supervisor
 
-The repository also contains `scripts/aerodrome-one-cron-rebalance.mjs`, a user-approved signer-backed executor for the managed CL200-LFI/USDC wallet. When `HERMES_LP_EXECUTE=1` is set by the launchd wrapper, it is allowed to broadcast only after the same gates above pass. It must additionally:
+The repository uses a split control plane for the managed CL200-LFI/USDC wallet:
 
+- `scripts/aerodrome-lp-watcher.mjs` runs outside Hermes every 15s via launchd, reads live tick/range/stake state, and writes `runs/aerodrome-lp-supervisor/state.json`.
+- `scripts/aerodrome-lp-supervisor-precheck.py` is the Hermes cron precheck for a 1-minute supervisor. If watcher state is fresh and not actionable it emits `wakeAgent: false`; the agent must stay silent.
+- `scripts/aerodrome-one-cron-rebalance.mjs` remains the strict signer-backed LP CLI, but the old launchd executor is retired/disabled and must not be used as a tight Hermes loop.
+
+Any signer-backed LP action must additionally:
+
+- use watcher/status JSON as the starting point; do not infer missing balances, ticks, or pool state
+- max one LP action per run
+- require state age under 20s before acting
+- respect at least `HERMES_REBALANCE_COOLDOWN_SECONDS=600` for range-churn rebalances while still allowing true stake-remediation/orphan-cleanup actions
 - discover managed token ids from runtime state, launchd logs, `HERMES_EXTRA_TOKEN_IDS`, and bounded on-chain candidate scans; include dashboard IDs only when `HERMES_INCLUDE_DASHBOARD_CANDIDATES=1`
 - close wallet-owned or gauge-owned out-of-range leftovers before minting a replacement
 - persist a freshly minted token id before trying to approve/stake it, so a failed stake cannot become an invisible orphan
 - re-read `slot0` immediately before gauge deposit; if the fresh one-tick NFT moved out of range, close it instead of leaving it unstaked
-- apply `HERMES_REBALANCE_COOLDOWN_SECONDS` to range-churn rebalances while still allowing stake-remediation and orphan-cleanup actions
 - reject dust mints below `HERMES_MIN_POSITION_USD`
-- keep LP uptime/profitability as the hot-path priority. The scheduled loop must not run git pull/rebase, tests/build, commits, pushes, or Pages verification. Dashboard/source sync is a separate opt-in release action enabled only with `HERMES_DASHBOARD_SYNC=1`.
+- keep LP uptime/profitability as the hot-path priority. The supervisor/watcher path must not run git pull/rebase, tests/build, commits, pushes, or Pages verification. Dashboard/source sync is a separate opt-in release action enabled only with `HERMES_DASHBOARD_SYNC=1`.
 
 For principal rebalances, use this order:
 

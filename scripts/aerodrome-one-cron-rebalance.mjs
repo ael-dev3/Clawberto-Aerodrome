@@ -47,9 +47,11 @@ const CONTRACTS = {
 const TICK_SPACING = 200;
 const DESIRED_WIDTH_TICKS = 200;
 const SLIPPAGE_BPS = BigInt(process.env.HERMES_SLIPPAGE_BPS || '2000');
-const ETH_GAS_RESERVE_WEI = 1_500_000_000_000_000n; // ~a few USD on Base while leaving room for burst txs.
+const ETH_GAS_RESERVE_USD = Number(process.env.HERMES_ETH_GAS_RESERVE_USD || '1.5');
+const MIN_ETH_SWAP_USD = Number(process.env.HERMES_MIN_ETH_SWAP_USD || '0.25');
 const MIN_ETH_SWAP_WEI = 50_000_000_000_000n;
 const MIN_REBALANCE_USD = 0.15;
+const IDLE_REDEPLOY_USD = Number(process.env.HERMES_IDLE_REDEPLOY_USD || '2');
 const MIN_POSITION_USD = Number(process.env.HERMES_MIN_POSITION_USD || '1');
 const REBALANCE_COOLDOWN_SECONDS = Number(process.env.HERMES_REBALANCE_COOLDOWN_SECONDS || '600');
 const EXTRA_TOKEN_IDS = (process.env.HERMES_EXTRA_TOKEN_IDS || '').split(',').map((id) => id.trim()).filter(Boolean);
@@ -204,15 +206,22 @@ function recentRebalanceAgeSeconds() {
   return Number.isFinite(atMs) ? (Date.now() - atMs) / 1000 : Infinity;
 }
 
+function pidIsAlive(pid) {
+  const numericPid = Number(pid);
+  if (!Number.isInteger(numericPid) || numericPid <= 0) return false;
+  try { process.kill(numericPid, 0); return true; } catch { return false; }
+}
+
 function acquireLock() {
   ensureRunDir();
   if (existsSync(LOCK_PATH)) {
     const lock = readJson(LOCK_PATH, {});
     const ageMs = Date.now() - Date.parse(lock.at || 0);
-    if (ageMs < 10 * 60 * 1000) {
+    if (pidIsAlive(lock.pid) && ageMs < 10 * 60 * 1000) {
       console.log(stringifyJson({ status: 'LOCKED', lock }));
       process.exit(0);
     }
+    try { unlinkSync(LOCK_PATH); } catch {}
   }
   writeJson(LOCK_PATH, { at: nowIso(), pid: process.pid });
 }
@@ -552,14 +561,35 @@ async function cleanupOrphanPositions(exceptTokenId) {
   return closed;
 }
 
+function idleTokenUsdValue(status) {
+  const tick = Number(status.pool?.currentTick);
+  if (!Number.isFinite(tick)) return 0;
+  const lfi = Number(formatUnits(BigInt(status.balances?.lfi || 0), 18));
+  const usdc = Number(formatUnits(BigInt(status.balances?.usdc || 0), 6));
+  return lfi * tickPrice(tick) + usdc;
+}
+
+async function ethGasReserveWeiForUsd() {
+  if (!Number.isFinite(ETH_GAS_RESERVE_USD) || ETH_GAS_RESERVE_USD <= 0) return 0n;
+  const quoteAmount = 1_000_000_000_000_000n; // 0.001 ETH quote sample.
+  const route = await bestWethUsdcPath(quoteAmount);
+  const quoteUsd = Number(formatUnits(route.out, 6));
+  if (!Number.isFinite(quoteUsd) || quoteUsd <= 0) throw new Error(`invalid ETH/USDC gas reserve quote: ${route.out}`);
+  const reserveWei = BigInt(Math.ceil((ETH_GAS_RESERVE_USD / quoteUsd) * Number(quoteAmount)));
+  return reserveWei > 0n ? reserveWei : 1n;
+}
+
 async function convertEthExcessToUsdc() {
   const balances = await readBalances();
-  if (balances.eth <= ETH_GAS_RESERVE_WEI + MIN_ETH_SWAP_WEI) return { spentEth: 0n, usdcOut: 0n };
-  const spend = balances.eth - ETH_GAS_RESERVE_WEI;
+  const reserveWei = await ethGasReserveWeiForUsd();
+  if (balances.eth <= reserveWei + MIN_ETH_SWAP_WEI) return { spentEth: 0n, usdcOut: 0n, reserveWei: reserveWei.toString(), reserveUsd: ETH_GAS_RESERVE_USD };
+  const spend = balances.eth - reserveWei;
   const route = await bestWethUsdcPath(spend);
+  const spendUsd = Number(formatUnits(route.out, 6));
+  if (!Number.isFinite(spendUsd) || spendUsd < MIN_ETH_SWAP_USD) return { spentEth: 0n, usdcOut: 0n, reserveWei: reserveWei.toString(), reserveUsd: ETH_GAS_RESERVE_USD, skipped: 'below_min_eth_swap_usd', spendUsd };
   const minOut = slippageMin(route.out);
   const out = await swapExactInput(route.path, spend, minOut, spend, `Swap ETH to USDC via WETH/USDC-${route.spacing}`);
-  return { spentEth: spend, usdcOut: out, spacing: route.spacing };
+  return { spentEth: spend, usdcOut: out, spacing: route.spacing, reserveWei: reserveWei.toString(), reserveUsd: ETH_GAS_RESERVE_USD, spendUsd };
 }
 
 async function balanceInventoryToRange(currentTick, lowerTick, upperTick) {
@@ -846,6 +876,9 @@ async function decideAndMaybeRun() {
     reason = `range ${pos.tickLower}-${pos.tickUpper} != desired ${status.desired.lowerTick}-${status.desired.upperTick}`;
   } else if (rangeState(status.pool.currentTick, pos.tickLower, pos.tickUpper) !== 'IN_RANGE') {
     reason = `out of range at tick ${status.pool.currentTick}`;
+  } else {
+    const idleUsd = idleTokenUsdValue(status);
+    if (idleUsd >= IDLE_REDEPLOY_USD) reason = `idle capital ${idleUsd.toFixed(4)} USD >= redeploy threshold ${IDLE_REDEPLOY_USD}`;
   }
 
   if (!reason) {
@@ -855,7 +888,7 @@ async function decideAndMaybeRun() {
     return hold;
   }
 
-  const cooldownApplies = (reason.startsWith('range ') || reason.startsWith('out of range')) && recentRebalanceAgeSeconds() < REBALANCE_COOLDOWN_SECONDS;
+  const cooldownApplies = (reason.startsWith('range ') || reason.startsWith('out of range') || reason.startsWith('idle capital')) && recentRebalanceAgeSeconds() < REBALANCE_COOLDOWN_SECONDS;
   if (cooldownApplies) {
     const hold = { status: 'HOLD_COOLDOWN', reason, cooldownSeconds: REBALANCE_COOLDOWN_SECONDS, at: nowIso(), statusSnapshot: status };
     writeJson(STATE_PATH, hold);

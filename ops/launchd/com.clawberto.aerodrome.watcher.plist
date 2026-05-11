@@ -3,42 +3,32 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.clawberto.aerodrome.onecron</string>
+  <string>com.clawberto.aerodrome.watcher</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/marko/.openclaw/workspace/Clawberto-Aerodrome/scripts/aerodrome-one-cron-launchd.sh</string>
+    <string>/Users/marko/.openclaw/workspace/Clawberto-Aerodrome/scripts/aerodrome-lp-watcher-launchd.sh</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/marko/.openclaw/workspace/Clawberto-Aerodrome</string>
   <key>RunAtLoad</key>
-  <false/>
-  <key>Disabled</key>
   <true/>
   <key>StartInterval</key>
-  <integer>60</integer>
+  <integer>15</integer>
   <key>StandardOutPath</key>
-  <string>/Users/marko/.openclaw/workspace/Clawberto-Aerodrome/runs/aerodrome-one-cron/launchd.out.log</string>
+  <string>/Users/marko/.openclaw/workspace/Clawberto-Aerodrome/runs/aerodrome-lp-supervisor/watcher.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/marko/.openclaw/workspace/Clawberto-Aerodrome/runs/aerodrome-one-cron/launchd.err.log</string>
+  <string>/Users/marko/.openclaw/workspace/Clawberto-Aerodrome/runs/aerodrome-lp-supervisor/watcher.err.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/marko/.foundry/bin</string>
-    <key>HERMES_LP_EXECUTE</key>
-    <string>1</string>
     <key>HERMES_RPC_URL</key>
     <string>https://base-rpc.publicnode.com</string>
-    <key>HERMES_REBALANCE_COOLDOWN_SECONDS</key>
-    <string>600</string>
-    <key>HERMES_MIN_POSITION_USD</key>
-    <string>1</string>
-    <key>HERMES_DASHBOARD_SYNC</key>
-    <string>0</string>
-    <key>HERMES_INCLUDE_DASHBOARD_CANDIDATES</key>
+    <key>HERMES_LP_EXECUTE</key>
     <string>0</string>
     <key>HERMES_DISCOVERY_FORWARD_SCAN</key>
-    <string>250</string>
+    <string>0</string>
   </dict>
 </dict>
 </plist>
