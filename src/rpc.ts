@@ -199,6 +199,15 @@ export async function loadWalletBalances(address: Address = WALLET_ADDRESS): Pro
   return { eth, lfi, usdc, aero };
 }
 
+export function sumWalletBalances(balances: readonly WalletBalances[]): WalletBalances {
+  return balances.reduce<WalletBalances>((sum, item) => ({
+    eth: sum.eth + item.eth,
+    lfi: sum.lfi + item.lfi,
+    usdc: sum.usdc + item.usdc,
+    aero: sum.aero + item.aero,
+  }), { eth: 0n, lfi: 0n, usdc: 0n, aero: 0n });
+}
+
 export function trackedPositionAddresses(wallet: { address: Address; positionAddresses?: readonly Address[] }): Address[] {
   const addresses = [wallet.address, ...(wallet.positionAddresses ?? [])];
   const seen = new Set<string>();
@@ -212,13 +221,24 @@ export function trackedPositionAddresses(wallet: { address: Address; positionAdd
 
 export async function loadTrackedWallet(wallet: (typeof TRACKED_WALLETS)[number]): Promise<TrackedWalletSnapshot> {
   try {
+    const positionAddresses = trackedPositionAddresses(wallet);
+    const balanceResults = await Promise.allSettled(positionAddresses.map((address) => loadWalletBalances(address)));
+    const balances = balanceResults
+      .filter((result): result is PromiseFulfilledResult<WalletBalances> => result.status === 'fulfilled')
+      .map((result) => result.value);
+    const failures = balanceResults.filter((result) => result.status === 'rejected');
+    if (balances.length === 0) {
+      const [failure] = failures;
+      throw failure?.reason ?? new Error('No tracked balance reads completed');
+    }
     return {
       label: wallet.label,
       shortLabel: wallet.shortLabel,
       address: wallet.address,
-      positionAddresses: trackedPositionAddresses(wallet),
+      positionAddresses,
       role: wallet.role,
-      balances: await loadWalletBalances(wallet.address),
+      balances: sumWalletBalances(balances),
+      error: failures.length > 0 ? `${failures.length} tracked balance address${failures.length === 1 ? '' : 'es'} failed to load` : undefined,
     };
   } catch (error) {
     return {
