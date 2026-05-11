@@ -55,6 +55,25 @@ describe('wallet PnL tracking', () => {
     expect(second.snapshot.pnlUsd).toBe(0);
   });
 
+  it('keeps the baseline across rebalances when the caller uses a stable performance cycle key', () => {
+    const first = updateWalletPnlRecord(undefined, {
+      walletKey: '0xabc',
+      positionSetKey: 'performance-cycle',
+      totalUsd: 100,
+      nowMs: 1_000,
+    });
+    const second = updateWalletPnlRecord(first.record, {
+      walletKey: '0xabc',
+      positionSetKey: 'performance-cycle',
+      totalUsd: 106,
+      nowMs: 2_000,
+    });
+
+    expect(second.snapshot.isNewBaseline).toBe(false);
+    expect(second.snapshot.baselineUsd).toBe(100);
+    expect(second.snapshot.pnlUsd).toBe(6);
+  });
+
   it('rejects malformed persisted records', () => {
     expect(normalizeWalletPnlRecord({
       walletKey: '0xabc',

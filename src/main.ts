@@ -17,21 +17,27 @@ import { DASHBOARD_SECTION_ORDER, type DashboardSectionId } from './dashboard-la
 import { renderBottomAnalytics } from './bottom-analytics';
 import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
 import { renderLpRangeChart } from './lp-range-chart';
-import { activePositionSetKey, normalizeWalletPnlRecord, updateWalletPnlRecord, type WalletPnlRecord, type WalletPnlSnapshot } from './pnl-tracking';
+import { normalizeWalletPnlRecord, updateWalletPnlRecord, type WalletPnlRecord, type WalletPnlSnapshot } from './pnl-tracking';
 import { poolReserveBreakdown, positionValuation, tokenSymbol, walletUsdValue } from './position-valuation';
 import { loadDashboardSnapshot, trackedPositionAddresses, type DashboardSnapshot, type LivePosition, type TrackedWalletSnapshot } from './rpc';
 import { scoreWalletTiers, type WalletTierInput, type WalletTierScore } from './tier-score';
 import { normalizeWalletUptimeStats, updateWalletUptimeStats, type WalletRangeState, type WalletUptimeStats } from './uptime';
 
 const REFRESH_MS = 15_000;
-const UPTIME_STORAGE_KEY = 'clawberto-range-uptime-v4-performance-reset-2026-05-11T16-20-36+02-00';
-const PNL_STORAGE_KEY = 'clawberto-overall-pnl-v2-performance-reset-2026-05-11T16-20-36+02-00';
+const PERFORMANCE_EPOCH_KEY = 'performance-reset-2026-05-11T16-27-18+02-00';
+const UPTIME_STORAGE_KEY = `clawberto-range-uptime-v5-${PERFORMANCE_EPOCH_KEY}`;
+const PNL_STORAGE_KEY = `clawberto-overall-pnl-v3-${PERFORMANCE_EPOCH_KEY}`;
+const PNL_POSITION_SET_KEY = 'performance-cycle';
 const LEGACY_UPTIME_STORAGE_KEYS = [
   'clawberto-range-uptime-v1',
   'clawberto-range-uptime-v2-reset-2026-05-11',
   'clawberto-range-uptime-v3-pnl-reset-2026-05-11',
+  'clawberto-range-uptime-v4-performance-reset-2026-05-11T16-20-36+02-00',
 ];
-const LEGACY_PNL_STORAGE_KEYS = ['clawberto-overall-pnl-v1-reset-2026-05-11'];
+const LEGACY_PNL_STORAGE_KEYS = [
+  'clawberto-overall-pnl-v1-reset-2026-05-11',
+  'clawberto-overall-pnl-v2-performance-reset-2026-05-11T16-20-36+02-00',
+];
 const app = document.querySelector<HTMLDivElement>('#app') ?? failMissingRoot();
 
 clearLegacyStats();
@@ -513,7 +519,7 @@ function updateWalletPnl(wallet: TrackedWalletSnapshot, summary: ReturnType<type
   const key = wallet.address.toLowerCase();
   const update = updateWalletPnlRecord(walletPnlRecords.get(key), {
     walletKey: key,
-    positionSetKey: activePositionSetKey(summary.positions.map((position) => position.tokenId)),
+    positionSetKey: PNL_POSITION_SET_KEY,
     totalUsd: walletOverallBalanceUsd(walletUsd, summary),
     nowMs,
   });
