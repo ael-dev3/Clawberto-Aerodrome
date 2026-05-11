@@ -141,7 +141,7 @@ function updatePositionsTs(request) {
   if (historyAt >= 0) {
     src = src.slice(0, historyAt + historyMarker.length) + historyEntries + src.slice(historyAt + historyMarker.length);
   } else {
-    src = `${src.trimEnd()}\n\nexport const positionHistory = [\n${historyEntries}];\n`;
+    src = `${src.trimEnd()}\n\nexport const positionHistory = [\n${historyEntries}] satisfies PositionHistoryRecord[];\n`;
   }
   writeFileSync(file, src);
 }

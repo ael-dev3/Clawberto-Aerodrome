@@ -18,6 +18,7 @@ import { renderBottomAnalytics } from './bottom-analytics';
 import { fetchGeckoPoolOhlcv, type GeckoCandle } from './gecko';
 import { renderLpRangeChart } from './lp-range-chart';
 import { normalizeWalletPnlRecord, updateWalletPnlRecord, type WalletPnlRecord, type WalletPnlSnapshot } from './pnl-tracking';
+import { positionHistory } from './positions';
 import { poolReserveBreakdown, positionValuation, tokenSymbol, walletUsdValue } from './position-valuation';
 import { loadDashboardSnapshot, trackedPositionAddresses, type DashboardSnapshot, type LivePosition, type TrackedWalletSnapshot } from './rpc';
 import { scoreWalletTiers, type WalletTierInput, type WalletTierScore } from './tier-score';
@@ -167,6 +168,10 @@ function installTooltips(): void {
 
 function addressLink(address: string): string {
   return `https://basescan.org/address/${address}`;
+}
+
+function txLink(hash: string): string {
+  return `https://basescan.org/tx/${hash}`;
 }
 
 function stateClass(state: string): string {
@@ -698,10 +703,20 @@ function renderDiagnostics(snapshot: DashboardSnapshot): string {
             </div>
           </div>
         `).join('');
+  const historyRows = positionHistory.map((event) => `
+          <div class="timeline-row">
+            <span>${event.date}</span>
+            <div>
+              <strong>${event.event}</strong>
+              <p>${event.detail}</p>
+              ${event.tx ? `<a href="${txLink(event.tx)}" target="_blank" rel="noreferrer">Tx ${compactAddress(event.tx)}</a>` : ''}
+            </div>
+          </div>
+        `).join('');
   return `
     <details class="panel history-panel diagnostics-panel" data-section="diagnostics-secondary">
       <summary>
-        <span><b>Diagnostics</b><em>Pool liquidity ${compactNumber(snapshot.pool.liquidity)} / staked ${percentFormat(stakedRatio, 1)} / ${snapshot.positions.length} verified LFI/USDC LP${snapshot.positions.length === 1 ? '' : 's'}</em></span>
+        <span><b>Diagnostics</b><em>Pool liquidity ${compactNumber(snapshot.pool.liquidity)} / staked ${percentFormat(stakedRatio, 1)} / ${snapshot.positions.length} verified LFI/USDC LP${snapshot.positions.length === 1 ? '' : 's'} / ${positionHistory.length} history events</em></span>
         <strong>Open details</strong>
       </summary>
       <div class="timeline">
@@ -721,6 +736,7 @@ function renderDiagnostics(snapshot: DashboardSnapshot): string {
         </div>
         ${walletRows}
         ${positionRows}
+        ${historyRows}
       </div>
     </details>
   `;
