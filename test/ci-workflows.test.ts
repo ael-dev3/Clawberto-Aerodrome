@@ -12,6 +12,16 @@ describe('GitHub Actions workflow hardening', () => {
   it('keeps the Pages deployment gated by tests before build and deploy', () => {
     expect(pagesWorkflow.indexOf('run: npm test')).toBeGreaterThan(-1);
     expect(pagesWorkflow.indexOf('run: npm run build')).toBeGreaterThan(pagesWorkflow.indexOf('run: npm test'));
-    expect(pagesWorkflow.indexOf('uses: actions/deploy-pages@v4')).toBeGreaterThan(pagesWorkflow.indexOf('run: npm run build'));
+    expect(pagesWorkflow.indexOf('uses: actions/deploy-pages@v5')).toBeGreaterThan(pagesWorkflow.indexOf('run: npm run build'));
+  });
+
+  it('uses action majors that target the current GitHub runner runtime', () => {
+    expect(pagesWorkflow).toContain('uses: actions/checkout@v6');
+    expect(pagesWorkflow).toContain('uses: actions/setup-node@v6');
+    expect(pagesWorkflow).toContain('uses: actions/configure-pages@v6');
+    expect(pagesWorkflow).toContain('uses: actions/upload-pages-artifact@v5');
+    expect(pagesWorkflow).toContain('uses: actions/deploy-pages@v5');
+    expect(hermesWorkflow).toContain('uses: actions/checkout@v6');
+    expect(hermesWorkflow).toContain('uses: actions/setup-python@v6');
   });
 });
