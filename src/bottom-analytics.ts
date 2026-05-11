@@ -431,7 +431,7 @@ function tierLine(score: WalletTierScore): string {
 
 function winnerLabel(agent: WalletTierScore, human: WalletTierScore): string {
   if (agent.score === human.score) return 'Even';
-  return agent.score > human.score ? 'AI agent leading' : 'Manual human leading';
+  return agent.score > human.score ? 'Clawberto leading' : 'Ael leading';
 }
 
 function renderProfitability(agent: CompetitorSummary, human: CompetitorSummary, agentScore: WalletTierScore, humanScore: WalletTierScore): string {
@@ -439,39 +439,39 @@ function renderProfitability(agent: CompetitorSummary, human: CompetitorSummary,
   return `
     <section class="analytics-card analytics-wide">
       <header>
-        <span>Manual human vs AI agent</span>
+        <span>Clawberto vs Ael</span>
         <strong>${winnerLabel(agentScore, humanScore)}</strong>
       </header>
       <div class="analytics-score-grid compact">
         <div>
-          <span>AI tier</span>
+          <span>Clawberto tier</span>
           <strong>${tierLine(agentScore)}</strong>
           <small>${percentFormat(agentScore.uptimePct, 1)} uptime / ${durationFormat(agentScore.trackedMs)} history</small>
         </div>
         <div>
-          <span>Human tier</span>
+          <span>Ael tier</span>
           <strong>${tierLine(humanScore)}</strong>
           <small>${percentFormat(humanScore.uptimePct, 1)} uptime / ${durationFormat(humanScore.trackedMs)} history</small>
         </div>
         <div>
           <span>Score spread</span>
           <strong>${numberFormat(Math.abs(agentScore.score - humanScore.score), 1)}</strong>
-          <small>${humanScore.score === 0 && agentScore.score > 0 ? 'manual wallet has no confirmed active LP' : `human/agent ratio ${Number.isFinite(relative) ? numberFormat(relative, 1) : 'n/a'}`}</small>
+          <small>${humanScore.score === 0 && agentScore.score > 0 ? 'Ael has no confirmed active LP' : `Ael/Clawberto ratio ${Number.isFinite(relative) ? numberFormat(relative, 1) : 'n/a'}`}</small>
         </div>
         <div>
-          <span>Agent APR stack</span>
+          <span>Clawberto APR stack</span>
           <strong>${agent.aprPct === undefined ? 'n/a' : percentFormat(agent.aprPct, 2)}</strong>
           <small>rewards ${agent.emissionAprPct === undefined ? 'n/a' : percentFormat(agent.emissionAprPct, 2)} / fee est ${agent.feeAprPct === undefined ? 'n/a' : percentFormat(agent.feeAprPct, 2)}</small>
         </div>
         <div>
-          <span>Manual APR stack</span>
+          <span>Ael APR stack</span>
           <strong>${human.aprPct === undefined ? 'n/a' : percentFormat(human.aprPct, 2)}</strong>
           <small>rewards ${human.emissionAprPct === undefined ? 'n/a' : percentFormat(human.emissionAprPct, 2)} / fee est ${human.feeAprPct === undefined ? 'n/a' : percentFormat(human.feeAprPct, 2)}</small>
         </div>
         <div>
           <span>Tier basis</span>
           <strong>${numberFormat(agentScore.yieldScore, 1)} / ${numberFormat(humanScore.yieldScore, 1)}</strong>
-          <small>AI/human yield score, uptime weighted first</small>
+          <small>Clawberto/Ael yield score, uptime weighted first</small>
         </div>
       </div>
     </section>

@@ -1,6 +1,6 @@
 # Clawberto Aerodrome
 
-Production dashboard for Aerodrome CL200 LFI/USDC on Base, comparing Clawberto's AI wallet against the manual wallet.
+Production dashboard for Aerodrome CL200 LFI/USDC on Base, comparing Clawberto against Ael.
 
 https://ael-dev3.github.io/Clawberto-Aerodrome/
 

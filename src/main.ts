@@ -217,8 +217,8 @@ function renderShell(content: string): void {
         <nav class="toplinks" aria-label="Protocol links">
           <a href="${addressLink(CONTRACTS.pool)}" target="_blank" rel="noreferrer">Pool</a>
           <a href="${addressLink(CONTRACTS.gauge)}" target="_blank" rel="noreferrer">Gauge</a>
-          <a href="${addressLink(WALLET_ADDRESS)}" target="_blank" rel="noreferrer">AI wallet</a>
-          <a href="${addressLink(COMPARISON_WALLET_ADDRESS)}" target="_blank" rel="noreferrer">Human wallet</a>
+          <a href="${addressLink(WALLET_ADDRESS)}" target="_blank" rel="noreferrer">Clawberto wallet</a>
+          <a href="${addressLink(COMPARISON_WALLET_ADDRESS)}" target="_blank" rel="noreferrer">Ael wallet</a>
           <span><i></i> ${REFRESH_MS / 1000}s live</span>
         </nav>
       </header>
@@ -604,7 +604,7 @@ function renderWalletLpPanel(
     <article class="wallet-lp-panel">
       <header class="wallet-lp-header">
         <div>
-          <p class="eyebrow">${wallet.role === 'agent' ? 'AI agent' : 'Manual human'}</p>
+          <p class="eyebrow">${wallet.label}</p>
           <h2>${wallet.shortLabel}</h2>
           <a href="${addressLink(wallet.address)}" target="_blank" rel="noreferrer">${compactAddress(wallet.address)}</a>
           ${walletLinkList(wallet)}
@@ -643,7 +643,7 @@ function renderRangeConsole(snapshot: DashboardSnapshot, historicalCandles: Geck
     <section class="range-console" data-section="range-control">
       <div class="console-head">
         <div>
-          <p class="eyebrow">Manual human vs AI agent</p>
+          <p class="eyebrow">Clawberto vs Ael</p>
           <h2>LFI/USDC LP cockpit</h2>
           <p>Current price <b>${formatUsd(price, 8)}</b> per LFI / tick <b>${tickLabel(snapshot.pool.currentTick)}</b></p>
         </div>

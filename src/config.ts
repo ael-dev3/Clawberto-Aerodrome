@@ -30,10 +30,10 @@ export const RPC_ENDPOINTS = [
 ] as const;
 
 export const TRACKED_WALLETS = [
-  { label: 'Clawberto agent', shortLabel: 'AI agent', address: WALLET_ADDRESS, role: 'agent' },
+  { label: 'Clawberto wallet', shortLabel: 'Clawberto', address: WALLET_ADDRESS, role: 'agent' },
   {
-    label: 'Ael manual wallet',
-    shortLabel: 'Manual human',
+    label: 'Ael wallet',
+    shortLabel: 'Ael',
     address: COMPARISON_WALLET_ADDRESS,
     role: 'human',
     positionAddresses: [HUMAN_LP_CONTROLLER_ADDRESS],
